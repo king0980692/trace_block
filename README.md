@@ -6,6 +6,8 @@
 
 **A transparent, live tracer for AI coding-agent JSON event streams.**
 
+📖 **Illustrated guide: [king0980692.github.io/trace_block](https://king0980692.github.io/trace_block/)** — screenshots of every view and feature.
+
 Pipe an agent's machine-readable event stream into `trace_block` and watch the run as it happens —
 every prompt, thinking block, answer, tool call, tool result, retry and backend response — in a
 full-screen terminal browser you can navigate cell by cell with vim keys. The raw stream passes
@@ -81,6 +83,8 @@ piece of context that does not come from the stream (a provider's `baseUrl` from
 
 ## Install
 
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#install">king0980692.github.io/trace_block#install</a></sub>
+
 ### Prebuilt binaries
 
 Download the archive for your platform from the
@@ -114,6 +118,8 @@ Windows is not supported. Rendering SVG/PNG/inline images uses the system's inst
 
 ## Quick start
 
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#quick-start">king0980692.github.io/trace_block#quick-start</a></sub>
+
 ### pi
 
 ```bash
@@ -127,6 +133,8 @@ pi --mode json -p "Summarise the files in ./docs" | trace_block -o run.json
   same terminal. Use `-o` (or `| tee run.json >/dev/null`).
 
 ### Claude Code
+
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#claude-code">king0980692.github.io/trace_block#claude-code</a></sub>
 
 ```bash
 claude -p "Summarise the files in ./docs" \
@@ -152,6 +160,8 @@ cat run.json | trace_block -q --trajectory run.md >/dev/null   # export a trajec
 ```
 
 ## Images
+
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#images">king0980692.github.io/trace_block#images</a></sub>
 
 Images sent to a vision model appear in the view as one-line placeholders built from the recorded
 block — `[image · image/png · 8.0 KB]` (media type and decoded size); the base64 data is never
@@ -196,6 +206,8 @@ view shows only what was recorded.)
 
 ## Session logs
 
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#session-logs">king0980692.github.io/trace_block#session-logs</a></sub>
+
 Both agents also save every session to disk, and `trace_block` reads those files directly — in the
 browser, the scroll view, `--trajectory` and `replay`:
 
@@ -227,6 +239,8 @@ event stream, so the view shows what it records and nothing more:
 
 ## The interactive browser
 
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#browser">king0980692.github.io/trace_block#browser</a></sub>
+
 Default when stderr is a terminal (`-i` forces it, `--scroll` disables it).
 
 | Key | List | Detail view (after `l`) |
@@ -250,9 +264,11 @@ Default when stderr is a terminal (`-i` forces it, `--scroll` disables it).
 
 The bottom rows show key hints (always as key + description; `?` lists the rest when the terminal
 is narrow) and the position: model, source, `cell 12/40 · turn 5`, and `● live` / `✔ settled` /
-`■ ended`. Opening a cell with an active search jumps to the first match inside it.
+`■ ended` (a stream that stopped without its completion marker) / `■ session log`. Opening a cell with an active search jumps to the first match inside it.
 
 ## Cells
+
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#cells">king0980692.github.io/trace_block#cells</a></sub>
 
 | Cell | Content |
 |---|---|
@@ -269,6 +285,8 @@ is narrow) and the position: model, source, `cell 12/40 · turn 5`, and `● liv
 
 ## Output files
 
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#outputs">king0980692.github.io/trace_block#outputs</a></sub>
+
 | Option | Writes |
 |---|---|
 | `-o FILE` | the raw input stream, byte-for-byte, flushed per line |
@@ -277,6 +295,8 @@ is narrow) and the position: model, source, `cell 12/40 · turn 5`, and `● liv
 | `--mmd` / `--svg` / `--png PATH` | the live Mermaid sequence diagram (pi streams), rewritten atomically as events arrive |
 
 ## Mermaid diagram and the live viewer
+
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#diagram">king0980692.github.io/trace_block#diagram</a></sub>
 
 ```bash
 # pane A
@@ -293,11 +313,15 @@ what the terminal answered. `--inline` draws the diagram into the scroll view at
 
 ## Scroll view
 
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#scroll-view">king0980692.github.io/trace_block#scroll-view</a></sub>
+
 `--scroll` (or any non-terminal stderr) prints append-only blocks: session banner, turn separators,
 streaming thinking/answer text, tool blocks with a live timer, retry warnings, `⇄` backend lines and a
 final summary. Colors and in-place rewrites only when stderr is a TTY; plain text otherwise.
 
 ## Troubleshooting
+
+<sub>→ illustrated: <a href="https://king0980692.github.io/trace_block/#troubleshooting">king0980692.github.io/trace_block#troubleshooting</a></sub>
 
 - **The screen fills with raw JSON** — something prints stdout to the terminal (usually `| tee FILE`).
   Use `-o FILE`.

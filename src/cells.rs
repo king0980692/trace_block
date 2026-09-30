@@ -234,6 +234,8 @@ pub struct Model {
     /// input is a saved session log (pi `~/.pi/agent/sessions`, Claude Code `~/.claude/projects`),
     /// not a live event stream: no deltas, no completion marker
     pub session_log: bool,
+    /// events come from a file read at once (`browse`), not arriving live
+    pub from_file: bool,
     /// per tool: (name, calls, failures)
     pub tool_stats: Vec<(String, usize, usize)>,
     pub usage: Usage,
@@ -264,6 +266,7 @@ impl Model {
             session_cell: None,
             endpoints: load_endpoints(),
             session_log: false,
+            from_file: false,
             tool_stats: Vec::new(),
             usage: Usage::default(),
             retries: 0,
@@ -278,6 +281,11 @@ impl Model {
             open_retry: None,
             started: Instant::now(),
         }
+    }
+
+    /// Wall-clock timings (tool durations, turn clocks) only mean something for a live stream.
+    pub fn timed(&self) -> bool {
+        !self.session_log && !self.from_file
     }
 
     pub fn turn(&self) -> usize {
@@ -548,6 +556,7 @@ impl Model {
             }
             "turn_end" => {
                 let m = &ev["message"];
+                let timed = self.timed();
                 if let Some(t) = self.turns.last_mut() {
                     t.stop = m["stopReason"].as_str().map(String::from);
                     let (i, o) = (
@@ -557,7 +566,11 @@ impl Model {
                     if i + o > 0 {
                         t.usage = Some((i, o));
                     }
-                    t.secs = t.started.map(|s| s.elapsed().as_secs_f64());
+                    t.secs = if timed {
+                        t.started.map(|s| s.elapsed().as_secs_f64())
+                    } else {
+                        None
+                    };
                 }
                 let stop = m["stopReason"].as_str().unwrap_or("");
                 if !matches!(stop, "toolUse" | "error" | "aborted" | "") {
@@ -646,11 +659,12 @@ impl Model {
                     return;
                 };
                 let err = ev["isError"].as_bool().unwrap_or(false);
+                let timed = self.timed();
                 let c = &mut self.cells[i];
                 c.status = if err { Status::Err } else { Status::Ok };
                 c.body = pretty_if_json(&result_text(&ev["result"]));
                 c.images = crate::util::collect_images(&ev["result"]["content"]);
-                c.secs = Some(c.started.elapsed().as_secs_f64());
+                c.secs = timed.then(|| c.started.elapsed().as_secs_f64());
                 if err && let Some(t) = self.tool_stats.iter_mut().find(|t| Some(&t.0) == c.tool.as_ref()) {
                     t.2 += 1;
                 }
@@ -832,13 +846,14 @@ impl Model {
         }
         self.cells[i].title = parts.join(" · ");
         self.cells[i].body = serde_json::to_string_pretty(&recorded).unwrap_or_default();
+        let timed = self.timed();
         if let Some(t) = self.turns.get_mut(turn.saturating_sub(1)) {
             t.stop = stop.clone().or_else(|| Some("(not in stream)".into()));
             t.usage = Some((g("input_tokens"), g("output_tokens")));
-            t.secs = if self.session_log {
-                None
-            } else {
+            t.secs = if timed {
                 t.started.map(|s| s.elapsed().as_secs_f64())
+            } else {
+                None
             };
         }
         if let Some(cm) = self.cmsgs.get_mut(id) {
@@ -1129,7 +1144,7 @@ impl Model {
                         continue;
                     };
                     let err = b["is_error"].as_bool().unwrap_or(false);
-                    let live = !self.session_log;
+                    let live = self.timed();
                     let c = &mut self.cells[i];
                     c.status = if err { Status::Err } else { Status::Ok };
                     c.body = pretty_if_json(&claude_text(&b["content"]));

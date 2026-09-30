@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Project site (GitHub Pages) with illustrated sections for every view; README links into it.
+- `browse` of a saved stream shows no wall-clock timings; session logs show `■ session log` status.
 - Read the session logs pi (`~/.pi/agent/sessions`) and Claude Code (`~/.claude/projects`) keep on
   disk: browse, scroll view, `--trajectory` and `replay`. Claude transcripts add the prompt, recorded
   stop reasons and the system prompt (`attachment/prompt_snapshot`).

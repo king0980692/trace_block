@@ -43,6 +43,8 @@ scripts/
   tui_drive.py   drive a TUI in a pty + pyte and print screen snapshots
   herdr_cast.py  record a herdr pane to an asciicast (demo recordings)
   record_demo.sh the README demo: drive a real run, record, render GIF/MP4
+  herdr_shot.py  screenshot a herdr pane to PNG (site illustrations)
+site/            the project site (GitHub Pages)
 docs/            demo.gif / demo.cast
 fixtures/        (gitignored) your own recorded traces; tests that need them are skipped if absent
 ```
@@ -180,6 +182,15 @@ it: `scripts/herdr_cast.py` polls `herdr pane read --format ansi` and writes an 
 `docs/demo.gif`, ffmpeg makes an MP4 (attached to the release). Check a few frames before
 committing (`ffmpeg -i docs/demo.gif -vf "select=eq(n\,30)" -frames:v 1 f.png`) and make sure the
 recording shows nothing private (paths, account data, third-party text).
+
+### The project site
+
+`site/` is a static page (plain HTML + CSS, no build step) published to GitHub Pages by
+`.github/workflows/pages.yml` on pushes that touch `site/`. Its screenshots in `site/img/` are real
+captures: drive a scene in a herdr pane and run `scripts/herdr_shot.py <pane> site/img/<name>.png`
+(one-frame asciicast → agg → PNG). Use shareable content only (e.g. the public-domain corpus in the
+demo, the synthetic streams in `tests/data/`). Preview locally with
+`python3 -m http.server -d site 8000`.
 
 ## CI and releases
 

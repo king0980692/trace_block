@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trace_block — transparent live tracer for AI coding agents</title>
+<meta name="description" content="Pipe an AI coding agent's JSON event stream (pi, Claude Code) into trace_block and watch every prompt, thinking block, tool call and backend response live, in a vim-key terminal browser. Only what the stream records.">
+<meta property="og:title" content="trace_block">
+<meta property="og:description" content="Transparent live tracer for AI coding-agent JSON event streams (pi, Claude Code).">
+<meta property="og:image" content="img/browser-turn.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2316181d'/%3E%3Ctext x='6' y='22' font-family='monospace' font-size='16' fill='%237fd4e8'%3E%E2%96%8C%3C/text%3E%3Ctext x='14' y='22' font-family='monospace' font-size='14' fill='%23e4e7ee'%3E%3E%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="inner">
+    <a class="brand" href="#top">trace<span class="dot">_</span>block</a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#quick-start">Quick start</a>
+      <a href="#browser">Browser</a>
+      <a href="#cells">Cells</a>
+      <a href="#claude-code">Claude Code</a>
+      <a href="#session-logs">Session logs</a>
+      <a href="#images">Images</a>
+      <a href="#outputs">Outputs</a>
+      <a href="#diagram">Diagram</a>
+      <a href="#scroll-view">Scroll view</a>
+      <a href="#transparency">Transparency</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#install">Install</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </nav>
+    <a class="gh" href="https://github.com/king0980692/trace_block">GitHub ↗</a>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ================================================================ hero -->
+<div class="hero">
+  <h1>trace_block<span class="cursor">▌</span></h1>
+  <p class="tag">A transparent, live tracer for AI coding-agent event streams — every prompt, thought, tool call and backend response, as it happens.</p>
+  <div class="badges">
+    <a href="https://github.com/king0980692/trace_block/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/king0980692/trace_block/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://github.com/king0980692/trace_block/releases"><img alt="Release" src="https://img.shields.io/github/v/release/king0980692/trace_block"></a>
+    <a href="https://github.com/king0980692/trace_block/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="#quick-start">Get started</a>
+    <a class="btn" href="https://github.com/king0980692/trace_block/releases">Download</a>
+    <a class="btn" href="https://github.com/king0980692/trace_block">Source</a>
+  </div>
+  <figure class="demo">
+    <video src="img/demo.mp4" poster="img/browser-turn.png" autoplay muted loop playsinline width="952" height="647"
+           aria-label="Demo: a live pi run in the trace_block browser — colored JSON detail view, search, jumping to the final answer, key help">
+      <a href="img/demo.mp4">Watch the demo (MP4)</a>
+    </video>
+    <figcaption>A real run recorded in a terminal: pi + gpt-oss-120b answering a question about the public-domain 三国演义 text.</figcaption>
+  </figure>
+</div>
+
+<!-- ================================================================ why -->
+<section id="why">
+  <h2>Why<a class="hash" href="#why">#</a></h2>
+  <p class="lead">Agents in non-interactive mode are silent while they work: the event stream goes to a pipe, and a two-minute run looks frozen. Reading the raw NDJSON afterwards means wading through hundreds of streaming deltas. trace_block turns that stream into readable blocks <em>while it runs</em> — and never hides anything.</p>
+  <div class="features">
+    <div class="card"><h3><span class="ico">▌</span>Cell-by-cell browser</h3><p>One cell per block, grouped by turn. Move with <kbd>j</kbd>/<kbd>k</kbd>, open with <kbd>l</kbd>, search with <kbd>/</kbd>.</p></div>
+    <div class="card"><h3><span class="ico">⇄</span>Backend visible</h3><p>Response ids, served-by model, raw stop reasons, token usage incl. reasoning and cache, cost, diagnostics.</p></div>
+    <div class="card"><h3><span class="ico">⚙</span>What the model was given</h3><p>The system prompt and the tool definitions the agent disclosed to the model, as recorded.</p></div>
+    <div class="card"><h3><span class="ico">★</span>Final answer marked</h3><p>From the recorded stop reason. <kbd>a</kbd> jumps to it from anywhere.</p></div>
+    <div class="card"><h3><span class="ico">⎘</span>Byte-exact passthrough</h3><p>stdin → stdout untouched; <code>-o</code> saves the raw stream; <code>--trajectory</code> exports the messages.</p></div>
+    <div class="card"><h3><span class="ico">🖼</span>Images, drawn</h3><p>Images sent to vision models are drawn with kitty graphics or sixel when the terminal supports it.</p></div>
+    <div class="card"><h3><span class="ico">↺</span>Session logs</h3><p>Reads the logs pi and Claude Code keep on disk — browse or replay any past session.</p></div>
+    <div class="card"><h3><span class="ico">◇</span>Sequence diagrams</h3><p>A live Mermaid diagram of user ↔ agent ↔ tools, rendered in-process — no browser, no Node.</p></div>
+  </div>
+</section>
+
+<!-- ================================================================ quick start -->
+<section id="quick-start">
+  <h2>Quick start<a class="hash" href="#quick-start">#</a></h2>
+  <p class="lead">Pipe the agent's machine-readable stream into <code>trace_block</code>. The format is detected from the events — no flag needed.</p>
+  <div class="tabs" data-tabs>
+    <div class="bar" role="tablist">
+      <button role="tab" aria-selected="true">pi</button>
+      <button role="tab" aria-selected="false">Claude Code</button>
+      <button role="tab" aria-selected="false">Afterwards</button>
+    </div>
+    <div class="panel on" role="tabpanel">
+      <div class="code"><button class="copy">copy</button><pre><span class="c-cmd">pi</span> <span class="c-flag">--mode json -p</span> <span class="c-str">"Summarise the files in ./docs"</span> | <span class="c-cmd">trace_block</span> <span class="c-flag">-o</span> run.json</pre></div>
+      <p>Choose the model with <code>--model provider/id</code> (append <code>:high</code> for a thinking level) and the tools with <code>-t read,bash</code>, <code>-xt write</code> or <code>-nt</code>. <strong>Don't</strong> end the pipe with <code>| tee run.json</code> — tee prints the raw JSON into the same terminal; <code>-o</code> saves it instead.</p>
+    </div>
+    <div class="panel" role="tabpanel">
+      <div class="code"><button class="copy">copy</button><pre><span class="c-cmd">claude</span> <span class="c-flag">-p</span> <span class="c-str">"Summarise the files in ./docs"</span> \
+  <span class="c-flag">--output-format stream-json --verbose --include-partial-messages</span> \
+  | <span class="c-cmd">trace_block</span> <span class="c-flag">-o</span> run.jsonl</pre></div>
+      <p><code>--verbose</code> is required for stream-json in print mode; <code>--include-partial-messages</code> gives live deltas and per-message stop reasons. For a clean, reproducible run add <code>--setting-sources ""</code> (no user hooks or CLAUDE.md), <code>--strict-mcp-config</code> and <code>--tools "Read Grep Glob"</code>. <a href="#claude-code">More →</a></p>
+    </div>
+    <div class="panel" role="tabpanel">
+      <div class="code"><button class="copy">copy</button><pre><span class="c-cmd">trace_block browse</span> run.json                     <span class="c-cmt"># reopen a saved run</span>
+<span class="c-cmd">trace_block browse</span> <span class="c-str">"$(ls -t ~/.claude/projects/*/*.jsonl | head -1)"</span>   <span class="c-cmt"># newest Claude Code session</span>
+<span class="c-cmd">trace_block replay</span> run.json | <span class="c-cmd">trace_block</span>      <span class="c-cmt"># re-play with realistic timing</span>
+cat run.json | <span class="c-cmd">trace_block</span> <span class="c-flag">-q --trajectory</span> run.md &gt;/dev/null   <span class="c-cmt"># export a trajectory</span></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ browser -->
+<section id="browser">
+  <h2>The interactive browser<a class="hash" href="#browser">#</a></h2>
+  <p class="lead">The default view when stderr is a terminal. Every block of the run is a cell; cells are grouped under <code>TURN</code> headers that carry the model; the selected cell has a cyan bar on the left.</p>
+  <figure>
+    <a href="img/browser-turn.png"><img src="img/browser-turn.png" alt="The browser showing turn 3 and the final turn: thinking, a grep tool call with its output preview, the LLM response line, and the final answer header" loading="lazy" width="952" height="647"></a>
+    <figcaption>Turns 3 and 4: thinking, a <code>grep</code> call with its output preview and ✓ status, the <code>⇄ LLM response</code> backend line, the per-turn footer, and the green <code>TURN 4 · FINAL</code> header.</figcaption>
+  </figure>
+  <div class="table">
+    <table>
+      <thead><tr><th>Key</th><th>In the list</th><th>In the detail view (after <kbd>l</kbd>)</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>next / previous cell</td><td>scroll</td></tr>
+        <tr><td><kbd>l</kbd> / Enter</td><td>open the cell's full content</td><td>—</td></tr>
+        <tr><td><kbd>h</kbd> / Esc</td><td>—</td><td>back to the list</td></tr>
+        <tr><td><kbd>J</kbd> <kbd>K</kbd></td><td>—</td><td>next / previous cell</td></tr>
+        <tr><td><kbd>/</kbd></td><td>search (smartcase, CJK input works)</td><td>search inside the cell</td></tr>
+        <tr><td><kbd>n</kbd> <kbd>N</kbd></td><td>next / previous matching cell</td><td>next / previous matching line</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>previous / next turn</td><td>—</td></tr>
+        <tr><td><kbd>g</kbd> <kbd>G</kbd></td><td>top / end (<kbd>G</kbd> follows new output)</td><td>top / bottom</td></tr>
+        <tr><td><kbd>a</kbd></td><td>jump to the ★ final answer</td><td>—</td></tr>
+        <tr><td><kbd>t</kbd> · <kbd>b</kbd></td><td>hide / show thinking · backend cells</td><td>—</td></tr>
+        <tr><td><kbd>f</kbd></td><td>toggle follow mode</td><td>—</td></tr>
+        <tr><td><kbd>?</kbd></td><td>key reference</td><td>key reference</td></tr>
+        <tr><td><kbd>q</kbd></td><td>quit — a live stream keeps being consumed so the producer and <code>-o</code> finish</td><td>back</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="detail-view">Detail view — the full, recorded content</h3>
+  <p><kbd>l</kbd> opens a cell: complete tool arguments and output, the full thinking text, the system prompt, or the recorded JSON of a message — syntax-colored, in the original key order.</p>
+  <figure>
+    <a href="img/detail-json.png"><img src="img/detail-json.png" alt="Detail view of the tool definitions: JSON with cyan keys, green strings" loading="lazy" width="952" height="647"></a>
+    <figcaption>The tool definitions pi disclosed to the model (<code>toolsAdded</code>), exactly as recorded.</figcaption>
+  </figure>
+
+  <h3 id="search">Search</h3>
+  <div class="grid2">
+    <figure>
+      <a href="img/search.png"><img src="img/search.png" alt="Search for 曹嵩 with matches highlighted in reverse video, status bar /曹嵩 · cell 2/6" loading="lazy" width="952" height="647"></a>
+      <figcaption><kbd>/</kbd>曹嵩 then <kbd>n</kbd>: matches in reverse video, position in the status bar. Searches the whole cell — including output the list preview doesn't show.</figcaption>
+    </figure>
+    <figure>
+      <a href="img/browser-final.png"><img src="img/browser-final.png" alt="The final answer cell with a green bar and the star label" loading="lazy" width="952" height="647"></a>
+      <figcaption><kbd>a</kbd>: the ★ final answer, shown in full behind a green bar, Markdown rendered.</figcaption>
+    </figure>
+  </div>
+  <figure>
+    <a href="img/help.png"><img src="img/help.png" alt="The key reference screen opened with ?" loading="lazy" width="952" height="647"></a>
+    <figcaption><kbd>?</kbd> lists every key. The bottom row always shows keys with their descriptions; when the terminal is narrow it keeps what fits and ends with <code>? all keys</code>.</figcaption>
+  </figure>
+</section>
+
+<!-- ================================================================ cells -->
+<section id="cells">
+  <h2>Cells<a class="hash" href="#cells">#</a></h2>
+  <p class="lead">What each block shows. Every cell's detail view holds the recorded data behind it.</p>
+  <figure>
+    <a href="img/browser-tools.png"><img src="img/browser-tools.png" alt="Top of a run: session cell with model and backend, tools available, the tool definitions cell, the user prompt" loading="lazy" width="952" height="647"></a>
+    <figcaption>The top of a pi run: session (model badge; the provider's <code>baseUrl</code>, labelled as coming from <code>~/.pi/agent/models.json</code>), tools available, the tool definitions cell and the prompt.</figcaption>
+  </figure>
+  <div class="table">
+    <table>
+      <thead><tr><th>Cell</th><th>Content</th></tr></thead>
+      <tbody>
+        <tr><td><code>━━ pi session</code> / <code>━━ claude session</code></td><td>session id, cwd, model; pi: provider baseUrl (source-labelled); Claude: version, permission mode</td></tr>
+        <tr><td><code>· tools available</code> · <code>⚙</code></td><td>the tools offered to the model — pi: full JSON schemas; Claude: names from <code>system/init</code></td></tr>
+        <tr><td><code>▸ user</code></td><td>the prompt (images as <code>[image · …]</code>)</td></tr>
+        <tr><td><code>💭 thinking</code></td><td>the model's thinking as recorded (empty when the request asked for it to be redacted)</td></tr>
+        <tr><td><code>● assistant</code> · <code>★ FINAL ANSWER</code></td><td>answer text rendered as Markdown</td></tr>
+        <tr><td><code>┌ tool</code> … <code>└ ✓/✗</code></td><td>tool badge, arguments, output preview, status, duration, size</td></tr>
+        <tr><td><code>⇄ LLM response</code></td><td>per LLM call: response id, served-by model, stop reason (+ raw provider reason), tokens, cost, effort, diagnostics</td></tr>
+        <tr><td><code>⚠ retry</code> · <code>✗ model error</code></td><td>pi auto-retries and failed attempts</td></tr>
+        <tr><td><code>✗ permission denied</code> · <code>· system/…</code></td><td>Claude Code system events (hooks, thinking-token estimates, rate limits)</td></tr>
+        <tr><td>summary</td><td>pi: turns, tool calls, retries, token totals; Claude: the recorded <code>result</code> (duration, turns, cost, usage)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================================================================ claude -->
+<section id="claude-code">
+  <h2>Claude Code<a class="hash" href="#claude-code">#</a></h2>
+  <p class="lead">Claude Code's print mode (<code>claude -p … --output-format stream-json</code>) is read the same way. Each assistant message is one API request and becomes one turn.</p>
+  <div class="grid2">
+    <figure>
+      <a href="img/claude-stream.png"><img src="img/claude-stream.png" alt="A Claude Code stream: session, system/init tools, turn 1 thinking and thinking-token events" loading="lazy" width="952" height="647"></a>
+      <figcaption>Session and <code>system/init</code> (tool names only — that's all the stream carries), thinking, and <code>system/thinking_tokens</code> events with their recorded estimates.</figcaption>
+    </figure>
+    <figure>
+      <a href="img/claude-final.png"><img src="img/claude-final.png" alt="The final answer of a Claude Code run and the result summary with cost and duration" loading="lazy" width="952" height="647"></a>
+      <figcaption>The final answer (<code>stop end_turn</code>) and the recorded <code>result</code>: duration, turns, cost, usage, thinking tokens.</figcaption>
+    </figure>
+  </div>
+  <div class="table">
+    <table>
+      <thead><tr><th>Claude Code event</th><th>Shown as</th></tr></thead>
+      <tbody>
+        <tr><td><code>system/init</code></td><td>session cell + <code>⚙ system/init · tools (N)</code></td></tr>
+        <tr><td><code>stream_event</code> deltas</td><td>live thinking / text / tool input</td></tr>
+        <tr><td><code>assistant</code> (one block each)</td><td>the complete blocks, authoritative over the deltas</td></tr>
+        <tr><td><code>user</code> <code>tool_result</code></td><td>tool result; <code>is_error</code> → ✗</td></tr>
+        <tr><td>stream <code>message_delta</code></td><td><code>⇄ LLM response</code> with stop reason and usage (<code>(not in stream)</code> without partial messages)</td></tr>
+        <tr><td><code>system/permission_denied</code></td><td>red cell</td></tr>
+        <tr><td><code>result</code></td><td>summary</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn">
+    <p><strong>Empty thinking?</strong> When a request carries the <code>redact-thinking</code> beta the thinking blocks hold only a signature. Whether Claude Code sends it depends on the mode and version — in a capture with 2.1.285 the interactive CLI did and <code>claude -p</code> did not. The model thinks either way; see the thinking-token cells.</p>
+    <p><strong>Permission denied in <code>-p</code>?</strong> Print mode can't ask for approval. Offer only the tools you want (<code>--tools</code>), allow specific commands (<code>--allowedTools "Bash(ls *)"</code>), and use <code>--setting-sources ""</code> if a user hook rewrites commands.</p>
+  </div>
+</section>
+
+<!-- ================================================================ session logs -->
+<section id="session-logs">
+  <h2>Session logs<a class="hash" href="#session-logs">#</a></h2>
+  <p class="lead">Both agents save every session to disk. trace_block reads those files directly — in the browser, the scroll view, <code>--trajectory</code> and <code>replay</code>.</p>
+  <figure>
+    <a href="img/session-log.png"><img src="img/session-log.png" alt="A pi session log in the browser: model change, thinking level change, tools, prompt, turn 1" loading="lazy" width="952" height="647"></a>
+    <figcaption>A pi session log: model and thinking-level changes, the system prompt and tools, the prompt, then one turn per LLM call. The status bar says <code>■ session log</code>.</figcaption>
+  </figure>
+  <div class="table">
+    <table>
+      <thead><tr><th>Agent</th><th>Location</th><th>Shows</th></tr></thead>
+      <tbody>
+        <tr><td>pi</td><td><code>~/.pi/agent/sessions/--&lt;cwd&gt;--/&lt;ts&gt;_&lt;id&gt;.jsonl</code></td><td>system prompt, tool definitions, prompt, every assistant message (thinking, text, tool calls, backend metadata), tool results, model changes</td></tr>
+        <tr><td>Claude Code</td><td><code>~/.claude/projects/&lt;cwd&gt;/&lt;session-id&gt;.jsonl</code></td><td>everything the stream has, plus the <strong>prompt</strong>, each message's recorded <strong>stop reason</strong>, and the full <strong>system prompt</strong> (<code>attachment/prompt_snapshot</code>)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>A session log holds complete messages, not a live stream: no deltas and no execution timing are recorded, so none are shown, and the end is <code>end of session log</code> rather than "unfinished". Claude transcripts also contain account metadata (e.g. <code>attachment/session_context</code>) — mind that before sharing one.</p>
+</section>
+
+<!-- ================================================================ images -->
+<section id="images">
+  <h2>Images<a class="hash" href="#images">#</a></h2>
+  <p class="lead">Images sent to a vision model — attached to the prompt or returned by a tool that reads an image file — are never printed as base64.</p>
+  <div class="grid2">
+    <figure>
+      <a href="img/images-list.png"><img src="img/images-list.png" alt="A Read tool call whose result is shown as a one-line image placeholder" loading="lazy" width="952" height="647"></a>
+      <figcaption>In the list: a one-line placeholder from the recorded block — media type and decoded size. Tool summaries count images separately (<code>1 image</code>).</figcaption>
+    </figure>
+    <figure>
+      <a href="img/images-detail.png"><img src="img/images-detail.png" alt="The detail view of the Read tool call with the image drawn below its placeholder" loading="lazy" width="952" height="647"></a>
+      <figcaption>In the detail view, on a terminal with kitty graphics or sixel, the recorded image is drawn below its placeholder. <em>Illustration: the picture was composited into the screenshot at the position trace_block draws it, since screen captures only record text.</em></figcaption>
+    </figure>
+  </div>
+  <div class="table">
+    <table>
+      <thead><tr><th><code>--images</code></th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td><code>auto</code> (default)</td><td>asks the terminal: kitty graphics (kitty, Ghostty, WezTerm) → kitty; sixel in DA1 (foot, Windows Terminal ≥ 1.22, …) → sixel; otherwise placeholders only</td></tr>
+        <tr><td><code>kitty</code> · <code>sixel</code> · <code>iterm</code></td><td>force a protocol</td></tr>
+        <tr><td><code>off</code></td><td>placeholders only</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>PNG, JPEG, GIF and WebP are decoded; images are never enlarged; the scroll view draws thumbnails (≤ 60 × 12 cells). No graphics are written when stderr is not a terminal.</p>
+  <h3 id="sending-images">Sending an image in pipe mode</h3>
+  <div class="code"><button class="copy">copy</button><pre><span class="c-cmt"># pi: attach with @file (the model must accept images)</span>
+<span class="c-cmd">pi</span> <span class="c-flag">--model</span> provider/vision-model <span class="c-flag">--mode json -p</span> @photo.png <span class="c-str">"What is in this picture?"</span> | <span class="c-cmd">trace_block</span>
+<span class="c-cmt"># Claude Code: let it read the file</span>
+<span class="c-cmd">claude</span> <span class="c-flag">-p</span> <span class="c-str">"Look at ./photo.png — what is in it?"</span> <span class="c-flag">--tools</span> Read <span class="c-flag">--allowedTools</span> Read \
+  <span class="c-flag">--output-format stream-json --verbose</span> | <span class="c-cmd">trace_block</span></pre></div>
+  <div class="note warn">
+    <p><strong>pi and custom models:</strong> pi only sends images to models declared image-capable. For a model in <code>~/.pi/agent/models.json</code> without <code>"input": ["text", "image"]</code>, the request carries the text <code>(image omitted: model does not support images)</code> instead — while the session log and the stream still record the image. Verified with a request-logging proxy. Fix: <code>{ "id": "…", "input": ["text", "image"] }</code>.</p>
+  </div>
+</section>
+
+<!-- ================================================================ outputs -->
+<section id="outputs">
+  <h2>Output files<a class="hash" href="#outputs">#</a></h2>
+  <p class="lead">The raw stream is always passed through byte-for-byte (to stdout when it is a pipe or file — never into a terminal).</p>
+  <div class="table">
+    <table>
+      <thead><tr><th>Option</th><th>Writes</th></tr></thead>
+      <tbody>
+        <tr><td><code>-o FILE</code></td><td>the raw input stream, byte-for-byte, flushed per line</td></tr>
+        <tr><td><code>--trajectory FILE.md</code></td><td>every recorded message as Markdown — system prompt sections and tool definitions, user, each assistant message (all recorded fields, thinking, text, tool calls), each tool result, including failed attempts</td></tr>
+        <tr><td><code>--trajectory FILE.jsonl</code></td><td>the message lines, byte-exact: pi → <code>session</code> + every <code>message_end</code> (session logs: every <code>message</code>); Claude Code → <code>system/init</code>, <code>assistant</code>, <code>user</code>, <code>result</code></td></tr>
+        <tr><td><code>--mmd</code> · <code>--svg</code> · <code>--png PATH</code></td><td>the live Mermaid sequence diagram (pi streams), rewritten atomically as events arrive</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>An excerpt of a Markdown trajectory:</p>
+  <div class="code"><pre>## turn 2
+
+### assistant
+
+- provider: `nchc`
+- model: `gpt-oss-120b`
+- stopReason: `toolUse`
+- rawStopReason: `tool_calls`
+- usage: `{"input":1013,"output":66,"reasoning":12,…}`
+
+**toolCall** · grep · `chatcmpl-tool-b8536949b89d835b`
+
+```json
+{ "path": "./三國/三国演义.txt", "pattern": "曹騰", "context": 2, "limit": 20 }
+```
+
+### toolResult · grep · `chatcmpl-tool-b8536949b89d835b` · isError: false</pre></div>
+</section>
+
+<!-- ================================================================ diagram -->
+<section id="diagram">
+  <h2>Sequence diagram &amp; live viewer<a class="hash" href="#diagram">#</a></h2>
+  <p class="lead">For pi streams, trace_block keeps a Mermaid sequence diagram of user ↔ agent ↔ tools up to date, rendered in-process with <a href="https://github.com/1jehuang/mermaid-rs-renderer">mermaid-rs-renderer</a> — no browser, no Node.</p>
+  <div class="code"><button class="copy">copy</button><pre><span class="c-cmt"># pane A</span>
+<span class="c-cmd">pi</span> <span class="c-flag">--mode json -p</span> <span class="c-str">"…"</span> | <span class="c-cmd">trace_block</span> <span class="c-flag">--mmd</span> /tmp/run.mmd
+<span class="c-cmt"># pane B: redraws in place on every change (kitty / sixel / iTerm2 / character cells)</span>
+<span class="c-cmd">trace_block view</span> /tmp/run.mmd</pre></div>
+  <div class="grid2">
+    <figure>
+      <a href="img/diagram.png"><img src="img/diagram.png" alt="Rendered Mermaid sequence diagram of a run: user, gpt-oss-120b, find and grep lanes with numbered messages and thinking notes" loading="lazy"></a>
+      <figcaption><code>--png</code> output (<code>--theme dark</code>) for the demo run.</figcaption>
+    </figure>
+    <figure>
+      <a href="img/view-text.png"><img src="img/view-text.png" alt="The same diagram drawn with box characters in the terminal" loading="lazy" width="952" height="647"></a>
+      <figcaption><code>trace_block view --proto text</code>: the fallback for terminals without graphics.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ================================================================ scroll view -->
+<section id="scroll-view">
+  <h2>Scroll view<a class="hash" href="#scroll-view">#</a></h2>
+  <p class="lead"><code>--scroll</code> (or any non-terminal stderr) prints append-only blocks — handy for logs and CI. Colors and in-place streaming only on a TTY; plain text otherwise.</p>
+  <figure>
+    <a href="img/scroll-view.png"><img src="img/scroll-view.png" alt="The scroll view: the end of a run with the final answer marker and the summary" loading="lazy" width="952" height="647"></a>
+    <figcaption>The end of the demo run in the scroll view (replayed from the saved stream, so tool timings read 0.0s): answer, <code>★ FINAL ANSWER ↑</code> marker, summary with tool badges.</figcaption>
+  </figure>
+</section>
+
+<!-- ================================================================ transparency -->
+<section id="transparency">
+  <h2>Transparency<a class="hash" href="#transparency">#</a></h2>
+  <p class="lead">The design rule: show what the stream records — nothing reconstructed, nothing guessed.</p>
+  <div class="features">
+    <div class="card"><h3>No reconstructed values</h3><p>Nothing like "this request probably carried N messages". If it isn't in the stream, it isn't in the view.</p></div>
+    <div class="card"><h3>No guessed metrics</h3><p>No self-measured TTFT or tokens/s posing as backend data. Tool durations are measured by trace_block on live streams only.</p></div>
+    <div class="card"><h3>Absence is stated</h3><p><code>stop (not in stream)</code>, <code>(empty — no thinking text recorded)</code>, <code>end of session log</code>.</p></div>
+    <div class="card"><h3>Sources are labelled</h3><p>The one outside fact — a provider's baseUrl — says it comes from <code>~/.pi/agent/models.json</code>.</p></div>
+  </div>
+  <p>Every cell opens (<kbd>l</kbd>) to the recorded JSON, unmodified except for pretty-printing with the original key order.</p>
+</section>
+
+<!-- ================================================================ how it works -->
+<section id="how-it-works">
+  <h2>How it works<a class="hash" href="#how-it-works">#</a></h2>
+  <p class="lead">A reader thread takes stdin line by line. Raw bytes go out first, untouched; the parsed event then feeds the views.</p>
+  <div class="arch" role="img" aria-label="Data flow: stdin NDJSON to a reader thread; raw bytes to stdout, -o and --trajectory; parsed events to the cell model which drives the browser or the scroll views, and to the diagram writer which writes mmd/svg/png files read by trace_block view">
+    <svg viewBox="0 0 980 300" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b5"/>
+        </marker>
+      </defs>
+      <rect class="box hi" x="10" y="120" width="130" height="56" rx="8"/>
+      <text x="75" y="144" text-anchor="middle">stdin</text>
+      <text x="75" y="162" text-anchor="middle" class="small">NDJSON events</text>
+
+      <rect class="box" x="190" y="120" width="130" height="56" rx="8"/>
+      <text x="255" y="144" text-anchor="middle">reader thread</text>
+      <text x="255" y="162" text-anchor="middle" class="small">line by line</text>
+      <path class="edge hi" d="M140,148 L188,148"/>
+
+      <rect class="box" x="380" y="14" width="190" height="56" rx="8"/>
+      <text x="475" y="38" text-anchor="middle">raw bytes, untouched</text>
+      <text x="475" y="56" text-anchor="middle" class="mono">stdout · -o · --trajectory</text>
+      <path class="edge" d="M320,136 C350,120 350,42 378,42"/>
+
+      <rect class="box hi" x="380" y="120" width="190" height="56" rx="8"/>
+      <text x="475" y="144" text-anchor="middle">cells::Model</text>
+      <text x="475" y="162" text-anchor="middle" class="small">pi · Claude Code · session logs</text>
+      <path class="edge hi" d="M320,148 L378,148"/>
+
+      <rect class="box" x="380" y="226" width="190" height="56" rx="8"/>
+      <text x="475" y="250" text-anchor="middle">diagram writer</text>
+      <text x="475" y="268" text-anchor="middle" class="small">mmdr → .mmd / .svg / .png</text>
+      <path class="edge" d="M320,160 C350,176 350,254 378,254"/>
+
+      <rect class="box hi" x="640" y="84" width="170" height="56" rx="8"/>
+      <text x="725" y="108" text-anchor="middle">browser (TUI)</text>
+      <text x="725" y="126" text-anchor="middle" class="small">/dev/tty · alternate screen</text>
+      <path class="edge hi" d="M570,140 C600,140 610,112 638,112"/>
+
+      <rect class="box" x="640" y="156" width="170" height="56" rx="8"/>
+      <text x="725" y="180" text-anchor="middle">scroll view</text>
+      <text x="725" y="198" text-anchor="middle" class="small">append-only stderr</text>
+      <path class="edge" d="M570,156 C600,156 610,184 638,184"/>
+
+      <rect class="box" x="640" y="226" width="170" height="56" rx="8"/>
+      <text x="725" y="250" text-anchor="middle">trace_block view</text>
+      <text x="725" y="268" text-anchor="middle" class="small">kitty · sixel · text</text>
+      <path class="edge" d="M570,254 L638,254"/>
+
+      <rect class="box" x="850" y="84" width="120" height="56" rx="8"/>
+      <text x="910" y="108" text-anchor="middle">images</text>
+      <text x="910" y="126" text-anchor="middle" class="small">kitty / sixel</text>
+      <path class="edge" d="M810,112 L848,112"/>
+    </svg>
+  </div>
+  <p>Source layout, event formats, testing (unit, CLI, terminal-emulator and multiplexer tests) and the release process are in <a href="https://github.com/king0980692/trace_block/blob/main/DEVELOPMENT.md">DEVELOPMENT.md</a>.</p>
+</section>
+
+<!-- ================================================================ install -->
+<section id="install">
+  <h2>Install<a class="hash" href="#install">#</a></h2>
+  <div class="tabs" data-tabs>
+    <div class="bar" role="tablist">
+      <button role="tab" aria-selected="true">Prebuilt binary</button>
+      <button role="tab" aria-selected="false">cargo</button>
+      <button role="tab" aria-selected="false">From source</button>
+    </div>
+    <div class="panel on" role="tabpanel">
+      <p>Download the archive for your platform from the <a href="https://github.com/king0980692/trace_block/releases">Releases page</a> — <code>x86_64</code>/<code>aarch64</code> Linux and macOS, with <code>SHA256SUMS</code>.</p>
+      <div class="code"><button class="copy">copy</button><pre>tar xzf trace_block-v*-x86_64-unknown-linux-gnu.tar.gz
+install trace_block-*/trace_block ~/.local/bin/
+trace_block --version</pre></div>
+    </div>
+    <div class="panel" role="tabpanel">
+      <div class="code"><button class="copy">copy</button><pre>cargo install --git https://github.com/king0980692/trace_block --locked</pre></div>
+    </div>
+    <div class="panel" role="tabpanel">
+      <div class="code"><button class="copy">copy</button><pre>git clone https://github.com/king0980692/trace_block
+cd trace_block
+cargo build --release          # → target/release/trace_block</pre></div>
+      <p>Rust ≥ 1.90. Linux and macOS (POSIX terminal handling). Rendering SVG/PNG and images uses the system's fonts and decoders built in.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ troubleshooting -->
+<section id="troubleshooting">
+  <h2>Troubleshooting<a class="hash" href="#troubleshooting">#</a></h2>
+  <div class="table">
+    <table>
+      <thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+      <tbody>
+        <tr><td>The screen fills with raw JSON</td><td>Something prints stdout into the terminal — usually <code>| tee FILE</code>. Use <code>-o FILE</code> (or <code>| tee FILE &gt;/dev/null</code>).</td></tr>
+        <tr><td><code>✗ permission denied · Bash</code> (Claude <code>-p</code>)</td><td>Print mode can't ask. Use <code>--tools</code> / <code>--allowedTools</code>; with a hook that rewrites commands, run with <code>--setting-sources ""</code>.</td></tr>
+        <tr><td><code>💭 thinking (empty …)</code> (Claude)</td><td>The request asked for redacted thinking (<code>redact-thinking</code> beta). See the thinking-token cells.</td></tr>
+        <tr><td>pi shows thinking although <code>thinking off</code></td><td><code>off</code> means pi doesn't request reasoning; models that always reason (e.g. gpt-oss) still return it.</td></tr>
+        <tr><td>The vision model says it can't see the image (pi)</td><td>Declare <code>"input": ["text", "image"]</code> for the model in <code>models.json</code>. <a href="#images">Details →</a></td></tr>
+        <tr><td>No image drawn</td><td>The terminal or multiplexer doesn't pass kitty/sixel graphics. Check <code>trace_block view --probe</code>; force with <code>--images kitty|sixel</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="inner">
+    <span>trace_block · MIT license · diagrams by <a href="https://github.com/1jehuang/mermaid-rs-renderer">mermaid-rs-renderer</a></span>
+    <span><a href="https://github.com/king0980692/trace_block">GitHub</a> · <a href="https://github.com/king0980692/trace_block/releases">Releases</a> · <a href="https://github.com/king0980692/trace_block/blob/main/CHANGELOG.md">Changelog</a></span>
+  </div>
+</footer>
+
+<script>
+// tabs
+document.querySelectorAll('[data-tabs]').forEach(function (tabs) {
+  var buttons = tabs.querySelectorAll('[role=tab]');
+  var panels = tabs.querySelectorAll('[role=tabpanel]');
+  buttons.forEach(function (b, i) {
+    b.addEventListener('click', function () {
+      buttons.forEach(function (x, j) { x.setAttribute('aria-selected', i === j ? 'true' : 'false'); });
+      panels.forEach(function (p, j) { p.classList.toggle('on', i === j); });
+    });
+  });
+});
+// copy buttons
+document.querySelectorAll('.code .copy').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var text = btn.parentElement.querySelector('pre').innerText;
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = 'copied';
+      setTimeout(function () { btn.textContent = 'copy'; }, 1200);
+    });
+  });
+});
+</script>
+</body>
+</html>

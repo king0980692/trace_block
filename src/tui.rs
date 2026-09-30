@@ -802,7 +802,7 @@ fn help_screen(cw: usize) -> Vec<String> {
         ("Enter / →", "open (same as l)"),
         ("Esc / ←", "back (same as h)"),
         ("^d ^u space", "jump 5 cells in the list"),
-        ("^c", "stop everything (pp too)"),
+        ("^c", "stop everything (the producer too)"),
         ("?", "this help"),
     ];
     // (text, plain width)
@@ -1032,7 +1032,7 @@ fn turn_header(m: &Model, t: usize, cw: usize) -> String {
     };
     let model = info.map(|x| x.model.as_str()).filter(|s| !s.is_empty());
     // session logs are read at once: a wall-clock offset would be meaningless
-    let clock = if m.session_log {
+    let clock = if !m.timed() {
         " ".to_string()
     } else {
         format!(" +{} ", human_dur(at))
@@ -1222,6 +1222,9 @@ fn draw(tty: &mut Tty, ui: &mut Ui, m: &Model, source: &str) {
         }
         let state = if m.settled {
             paint("1;32", "✔ settled")
+        } else if m.eof && m.session_log {
+            // session logs record no completion marker: not an error
+            paint("1;36", "■ session log")
         } else if m.eof {
             paint("1;31", "■ ended")
         } else {
@@ -1390,6 +1393,7 @@ pub fn run(
         body_rows: 0,
         images_on_screen: false,
     };
+    m.from_file = !drain_on_quit;
     if let Some((proto, cell)) = images {
         ui.img = Some(proto);
         ui.cell_px = cell;
