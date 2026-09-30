@@ -41,6 +41,9 @@ tests/
   data/          small synthetic streams (pi and Claude Code) — no third-party content
 scripts/
   tui_drive.py   drive a TUI in a pty + pyte and print screen snapshots
+  herdr_cast.py  record a herdr pane to an asciicast (demo recordings)
+  record_demo.sh the README demo: drive a real run, record, render GIF/MP4
+docs/            demo.gif / demo.cast
 fixtures/        (gitignored) your own recorded traces; tests that need them are skipped if absent
 ```
 
@@ -152,6 +155,15 @@ expectations from those counts — not from memory.
   `send-text` keys, `pane read --source visible [--format ansi]` and assert on the screen.
 - Terminal capability probing can be tested by answering the queries from a fake pty (kitty graphics
   `\e_Gi=31;OK\e\\`, DA1 `\e[?62;4c` for sixel, `\e[6;H;Wt` for the cell size).
+
+### Recording the README demo
+
+`scripts/record_demo.sh <pane-id>` drives a real run in a [herdr](https://herdr.dev) pane and records
+it: `scripts/herdr_cast.py` polls `herdr pane read --format ansi` and writes an asciicast v2 file
+(one complete frame per screen change), [agg](https://github.com/asciinema/agg) renders
+`docs/demo.gif`, ffmpeg makes an MP4 (attached to the release). Check a few frames before
+committing (`ffmpeg -i docs/demo.gif -vf "select=eq(n\,30)" -frames:v 1 f.png`) and make sure the
+recording shows nothing private (paths, account data, third-party text).
 
 ## CI and releases
 

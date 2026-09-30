@@ -9,7 +9,7 @@ repository = "https://github.com/king0980692/trace_block"
 readme = "README.md"
 keywords = ["agent", "llm", "trace", "tui", "claude"]
 categories = ["command-line-utilities", "development-tools::debugging"]
-exclude = ["fixtures/", ".github/"]
+exclude = ["fixtures/", ".github/", "docs/"]
 
 [dependencies]
 anyhow = "1.0.104"

@@ -20,6 +20,13 @@ Supported producers:
 
 The input format is detected from the event types; no flag is needed.
 
+![trace_block demo: a live pi run in the browser — colored JSON detail, search, final answer, key help](docs/demo.gif)
+
+<sub>Recorded from a real run (pi + gpt-oss-120b searching the public-domain 三国演义 text) in a
+herdr pane with <code>scripts/record_demo.sh</code>. Also available as
+<a href="https://github.com/king0980692/trace_block/releases/download/v0.1.0/demo.mp4">MP4</a> and as an
+asciinema cast (<code>asciinema play docs/demo.cast</code>).</sub>
+
 ```
 ━━ pi session 01a0ec3a-d5e2-7754-9c5f-8cacdbc848ae
    cwd  /work
