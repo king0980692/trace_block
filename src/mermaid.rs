@@ -166,6 +166,49 @@ pub fn encode_image(pm: &tiny_skia::Pixmap, proto: Proto, cols: Option<u16>) -> 
     }
 }
 
+/// Pixel size of a recorded (base64) image, read from its header.
+pub fn image_dims(b64: &str) -> Option<(u32, u32)> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64.trim()).ok()?;
+    let sz = imagesize::blob_size(&bytes).ok()?;
+    Some((sz.width as u32, sz.height as u32))
+}
+
+/// Decode a recorded image (PNG/JPEG/GIF/WebP, base64) and scale it to fit `max_w`×`max_h`
+/// pixels, never enlarging it. Decoding goes through resvg by wrapping the image in an SVG.
+pub fn raster_image(mime: &str, b64: &str, max_w: u32, max_h: u32) -> Result<tiny_skia::Pixmap> {
+    let (w, h) = image_dims(b64).context("unreadable image data")?;
+    let (wf, hf) = (w.max(1) as f32, h.max(1) as f32);
+    let s = (max_w as f32 / wf).min(max_h as f32 / hf).min(1.0);
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{w}" height="{h}"><image width="{w}" height="{h}" xlink:href="data:{mime};base64,{}"/></svg>"#,
+        b64.trim()
+    );
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default())?;
+    let (pw, ph) = (((wf * s).ceil() as u32).max(1), ((hf * s).ceil() as u32).max(1));
+    let mut pm = tiny_skia::Pixmap::new(pw, ph).context("pixmap alloc")?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(s, s), &mut pm.as_mut());
+    Ok(pm)
+}
+
+/// Terminal cells (cols, rows) an image of `w`×`h` px occupies when fitted into `max_cols`×`max_rows`
+/// cells of `cell` pixels (never enlarged), plus the pixel box to rasterise it to.
+pub fn fit_cells(w: u32, h: u32, max_cols: u32, max_rows: u32, cell: (u32, u32)) -> ((u32, u32), (u32, u32)) {
+    let (cw, ch) = (cell.0.max(1) as f32, cell.1.max(1) as f32);
+    let s = ((max_cols as f32 * cw) / w.max(1) as f32)
+        .min((max_rows as f32 * ch) / h.max(1) as f32)
+        .min(1.0);
+    let (pw, ph) = ((w as f32 * s).max(1.0), (h as f32 * s).max(1.0));
+    let cols = (pw / cw).ceil().max(1.0) as u32;
+    let rows = (ph / ch).ceil().max(1.0) as u32;
+    ((cols, rows), (pw as u32, ph as u32))
+}
+
+/// Escape sequence drawing a recorded image at the cursor, fitted into the given cells.
+pub fn image_escape(mime: &str, b64: &str, proto: Proto, cols: u32, rows: u32, cell: (u32, u32)) -> Result<String> {
+    let pm = raster_image(mime, b64, cols * cell.0.max(1), rows * cell.1.max(1))?;
+    encode_image(&pm, proto, Some(cols as u16))
+}
+
 fn parse_hex(s: &str) -> Option<tiny_skia::Color> {
     let h = s.trim().strip_prefix('#')?;
     let h = if h.len() == 3 {
@@ -345,4 +388,28 @@ pub fn probe_terminal() -> (Option<Proto>, Option<(u32, u32)>) {
         return (Some(Proto::Text), cell); // terminal answered but supports neither
     }
     (None, cell)
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn decode_and_fit_a_png() {
+        // 3x2 red PNG
+        let mut pm = tiny_skia::Pixmap::new(3, 2).unwrap();
+        pm.fill(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes(&pm).unwrap());
+        assert_eq!(image_dims(&b64), Some((3, 2)));
+        let out = raster_image("image/png", &b64, 100, 100).unwrap();
+        assert_eq!((out.width(), out.height()), (3, 2), "never enlarged");
+        let px = out.pixel(1, 1).unwrap();
+        assert_eq!((px.red(), px.green(), px.blue()), (255, 0, 0));
+        let ((c, r), _) = fit_cells(320, 200, 40, 10, (10, 20));
+        assert_eq!((c, r), (32, 10));
+        let kitty = image_escape("image/png", &b64, Proto::Kitty, 2, 1, (10, 20)).unwrap();
+        assert!(kitty.starts_with("\x1b_Ga=T,f=100,q=2,c=2"));
+        let sixel = image_escape("image/png", &b64, Proto::Sixel, 2, 1, (10, 20)).unwrap();
+        assert!(sixel.starts_with("\x1bP"));
+    }
 }

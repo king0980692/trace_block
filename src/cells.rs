@@ -48,6 +48,8 @@ pub struct Cell {
     pub started: Instant,
     pub secs: Option<f64>,
     pub partial_bytes: usize,
+    /// image blocks of the content as (media type, base64), in placeholder order
+    pub images: Vec<(String, String)>,
     /// the run's final answer (answer text of the turn that ended with stop, not toolUse)
     pub final_answer: bool,
     /// input line number of the event that created the cell
@@ -69,6 +71,7 @@ impl Cell {
             started: Instant::now(),
             secs: None,
             partial_bytes: 0,
+            images: Vec::new(),
             final_answer: false,
             lineno,
             ver: 0,
@@ -388,6 +391,7 @@ impl Model {
                 let text = &crate::util::content_text(&m["content"]);
                 let i = self.push(Kind::User, lineno);
                 self.cells[i].body = text.to_string();
+                self.cells[i].images = crate::util::collect_images(&m["content"]);
             }
             "assistant" => {
                 // each assistant message is one LLM call → one turn
@@ -460,6 +464,7 @@ impl Model {
                 let c = &mut self.cells[i];
                 c.status = if err { Status::Err } else { Status::Ok };
                 c.body = pretty_if_json(&result_text(m));
+                c.images = crate::util::collect_images(&m["content"]);
                 c.secs = None; // no execution timing is recorded in a session log
                 if err && let Some(t) = self.tool_stats.iter_mut().find(|t| Some(&t.0) == c.tool.as_ref()) {
                     t.2 += 1;
@@ -596,6 +601,7 @@ impl Model {
                         let text = &crate::util::content_text(&m["content"]);
                         let i = self.push(Kind::User, lineno);
                         self.cells[i].body = text.to_string();
+                        self.cells[i].images = crate::util::collect_images(&m["content"]);
                     }
                     "assistant" => {
                         self.usage.add(&m["usage"]);
@@ -643,6 +649,7 @@ impl Model {
                 let c = &mut self.cells[i];
                 c.status = if err { Status::Err } else { Status::Ok };
                 c.body = pretty_if_json(&result_text(&ev["result"]));
+                c.images = crate::util::collect_images(&ev["result"]["content"]);
                 c.secs = Some(c.started.elapsed().as_secs_f64());
                 if err && let Some(t) = self.tool_stats.iter_mut().find(|t| Some(&t.0) == c.tool.as_ref()) {
                     t.2 += 1;
@@ -1126,6 +1133,7 @@ impl Model {
                     let c = &mut self.cells[i];
                     c.status = if err { Status::Err } else { Status::Ok };
                     c.body = pretty_if_json(&claude_text(&b["content"]));
+                    c.images = crate::util::collect_images(&b["content"]);
                     c.secs = live.then(|| c.started.elapsed().as_secs_f64());
                     if err && let Some(t) = self.tool_stats.iter_mut().find(|t| Some(&t.0) == c.tool.as_ref()) {
                         t.2 += 1;
@@ -1139,6 +1147,7 @@ impl Model {
                 {
                     let i = self.push(Kind::User, lineno);
                     self.cells[i].body = claude_text(content);
+                    self.cells[i].images = crate::util::collect_images(content);
                 }
             }
             ("result", _) => {

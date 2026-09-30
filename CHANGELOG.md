@@ -6,6 +6,8 @@
   disk: browse, scroll view, `--trajectory` and `replay`. Claude transcripts add the prompt, recorded
   stop reasons and the system prompt (`attachment/prompt_snapshot`).
 - No wall-clock timings for session logs; `end of session log` instead of "unfinished".
+- Recorded images are drawn when the terminal supports graphics (`--images auto|kitty|sixel|iterm|off`,
+  auto-detected): in the browser's detail view and as thumbnails in the scroll view.
 - Image content blocks (pi and Claude Code; user messages and tool results) are shown as
   `[image · <media type> · <size>]` placeholders instead of being dropped or dumped as base64;
   tool summaries count images separately (`1 lines · 27 B · 1 image`).

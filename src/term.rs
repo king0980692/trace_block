@@ -76,6 +76,8 @@ pub struct Term {
     /// tool result preview lines (0 = hide results)
     pub preview: usize,
     pub show_thinking: bool,
+    /// draw image blocks with this protocol (and cell size); None = placeholders only
+    pub images: Option<(crate::mermaid::Proto, (u32, u32))>,
     /// count of emitted chunks, to tell whether a tool block is still contiguous
     seq: u64,
     /// last emitted output ended in a blank line (or nothing printed yet)
@@ -105,6 +107,7 @@ impl Term {
             settled: false,
             preview: PREVIEW_LINES,
             show_thinking: true,
+            images: None,
             seq: 0,
             at_gap: true,
             tool_seq: HashMap::new(),
@@ -515,6 +518,7 @@ impl Term {
                 self.gap();
                 let s = format!("{}\n  {}", self.paint("1;34", "▸ user"), body);
                 self.line(&s);
+                self.draw_images(&m["content"]);
             }
             "assistant" => {
                 self.usage.add(&m["usage"]);
@@ -579,6 +583,25 @@ impl Term {
             let st = self.tool_status(&id);
             self.emit(&st);
             self.live = Some(Live::Tool { id });
+        }
+    }
+
+    /// Draw the image blocks of `content` inline (terminal graphics), below the placeholder lines.
+    fn draw_images(&mut self, content: &Value) {
+        let Some((proto, cell)) = self.images else { return };
+        if !self.tty {
+            return;
+        }
+        let max_cols = (self.width().saturating_sub(4) as u32).min(60);
+        for (mime, data) in crate::util::collect_images(content) {
+            let Some((w, h)) = crate::mermaid::image_dims(&data) else {
+                continue;
+            };
+            let ((cols, rows), _) = crate::mermaid::fit_cells(w, h, max_cols, 12, cell);
+            if let Ok(esc) = crate::mermaid::image_escape(&mime, &data, proto, cols, rows, cell) {
+                self.seal();
+                self.emit(&format!("  {esc}\n"));
+            }
         }
     }
 
@@ -655,6 +678,7 @@ impl Term {
             );
         }
         self.line(&s);
+        self.draw_images(&ev["result"]["content"]);
     }
 
     fn summary(&mut self) {

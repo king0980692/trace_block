@@ -158,6 +158,17 @@ block — `[image · image/png · 8.0 KB]` (media type and decoded size); the ba
 printed, and `--trajectory FILE.md` notes it as omitted (`-o` and the JSONL trajectory keep it
 byte-exact). This covers user messages and tool results (e.g. a `read`/`Read` of an image file).
 
+**Drawing the images** — when the terminal supports graphics, the recorded image itself is drawn:
+
+- in the browser's detail view (`l` on the cell), below its placeholder, scaled to fit the window;
+- in the scroll view, as a thumbnail (≤ 60 columns × 12 rows) under the message or tool block.
+
+`--images auto` (default) asks the terminal: kitty graphics (kitty, Ghostty, WezTerm) → kitty,
+sixel support in DA1 (foot, Windows Terminal ≥ 1.22, xterm -ti vt340, …) → sixel, otherwise
+placeholders only. Force one with `--images kitty|sixel|iterm`, or `--images off`. PNG, JPEG, GIF
+and WebP are decoded; nothing is enlarged. When stderr is not a terminal no graphics are written.
+Inside a multiplexer the image only appears if it passes the graphics protocol through.
+
 Sending an image in pipe mode:
 
 ```bash
@@ -302,8 +313,9 @@ final summary. Colors and in-place rewrites only when stderr is a TTY; plain tex
   result summary.
 - **pi: thinking appears although `thinking off`** — `thinking off` means pi does not request reasoning;
   models that always reason (e.g. gpt-oss) still return it, and pi records it.
-- **No image in `view`** — your terminal (or multiplexer) does not pass kitty/sixel graphics; use
-  `--proto text`.
+- **No image in `view` or in the detail view** — your terminal (or multiplexer) does not pass kitty/sixel
+  graphics; use `--proto text` for `view`. For images in traces, check what the terminal answers with
+  `trace_block view --probe`, or force a protocol with `--images kitty|sixel`.
 
 ## Development
 

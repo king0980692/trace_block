@@ -134,6 +134,22 @@ pub fn image_placeholder(b: &serde_json::Value) -> Option<String> {
     Some(format!("[image · {mime}{size}]"))
 }
 
+/// The image blocks of a content value as (media type, base64 data), in order — the same blocks
+/// `content_text` turns into `[image · …]` placeholders.
+pub fn collect_images(content: &serde_json::Value) -> Vec<(String, String)> {
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|b| b["type"] == "image")
+        .filter_map(|b| {
+            let mime = b["mimeType"].as_str().or_else(|| b["source"]["media_type"].as_str())?;
+            let data = b["data"].as_str().or_else(|| b["source"]["data"].as_str())?;
+            Some((mime.to_string(), data.to_string()))
+        })
+        .collect()
+}
+
 /// All readable content of a message/tool content value (a string or content blocks): text as is,
 /// images as placeholders, other blocks as compact JSON.
 pub fn content_text(content: &serde_json::Value) -> String {

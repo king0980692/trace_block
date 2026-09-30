@@ -2,6 +2,7 @@
 //! h goes back. Works live (while the stream arrives) and on saved traces.
 
 use crate::cells::{Cell, Kind, Model, Status};
+use crate::mermaid::Proto;
 use crate::util::{badge, human_bytes, human_dur, str_width, tool_list, trunc, wrap};
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -687,6 +688,56 @@ struct Ui {
     reveal: Reveal,
     /// `?` overlay listing every key
     help: bool,
+    /// draw images with this protocol (kitty / sixel / iterm); None = placeholders only
+    img: Option<Proto>,
+    /// terminal cell size in pixels
+    cell_px: (u32, u32),
+    /// encoded image escapes: (cell, image #, cols, rows) → escape
+    img_cache: HashMap<(usize, usize, u32, u32), String>,
+    /// last frame written (unchanged frames are not rewritten, so images are not re-sent)
+    last_frame: String,
+    /// body rows of the last frame (for detail search offsets)
+    body_rows: usize,
+    /// the last frame placed images (kitty placements must be deleted before the next one)
+    images_on_screen: bool,
+}
+
+/// Rows reserved in the detail view for image `k` of the cell, starting at line `start`.
+struct ImgSlot {
+    start: usize,
+    k: usize,
+    cols: u32,
+    rows: u32,
+}
+
+/// Insert blank rows under each `[image · …]` line of a detail view, sized to fit the image.
+fn with_image_slots(lines: Vec<String>, c: &Cell, ui: &Ui, cw: usize, body_h: usize) -> (Vec<String>, Vec<ImgSlot>) {
+    if ui.img.is_none() || c.images.is_empty() {
+        return (lines, Vec::new());
+    }
+    let max_cols = cw.saturating_sub(2).max(10) as u32;
+    let max_rows = body_h.saturating_sub(4).clamp(4, 24) as u32;
+    let mut out = Vec::with_capacity(lines.len());
+    let mut slots = Vec::new();
+    let mut k = 0;
+    for l in lines {
+        let is_ph = strip_ansi(&l).trim_start().starts_with("[image · ");
+        out.push(l);
+        if is_ph && let Some((_, data)) = c.images.get(k) {
+            if let Some((w, h)) = crate::mermaid::image_dims(data) {
+                let ((cols, rows), _) = crate::mermaid::fit_cells(w, h, max_cols, max_rows, ui.cell_px);
+                slots.push(ImgSlot {
+                    start: out.len(),
+                    k,
+                    cols,
+                    rows,
+                });
+                out.extend(std::iter::repeat_n(String::new(), rows as usize));
+            }
+            k += 1;
+        }
+    }
+    (out, slots)
 }
 
 const LIST_KEYS: &[(&str, &str)] = &[
@@ -909,7 +960,8 @@ fn detail_search(ui: &mut Ui, m: &Model, cw: usize, fwd: bool) {
         return;
     };
     let Some(c) = m.cells.get(di) else { return };
-    let lines: Vec<String> = detail_lines(c, m, cw).iter().map(|l| strip_ansi(l)).collect();
+    let (slotted, _) = with_image_slots(detail_lines(c, m, cw), c, ui, cw, ui.body_rows.max(10));
+    let lines: Vec<String> = slotted.iter().map(|l| strip_ansi(l)).collect();
     let hits: Vec<usize> = lines
         .iter()
         .enumerate()
@@ -1031,13 +1083,35 @@ fn draw(tty: &mut Tty, ui: &mut Ui, m: &Model, source: &str) {
     let status_right;
     let status_left;
 
+    let mut overlays: Vec<(usize, String)> = Vec::new();
+    ui.body_rows = body_h;
     if let Some(di) = ui.detail {
         let di = di.min(m.cells.len().saturating_sub(1));
         let lines = m.cells.get(di).map(|c| detail_lines(c, m, cw)).unwrap_or_default();
+        let (lines, slots) = match m.cells.get(di) {
+            Some(c) => with_image_slots(lines, c, ui, cw, body_h),
+            None => (lines, Vec::new()),
+        };
         let max_scroll = lines.len().saturating_sub(body_h);
         ui.dscroll = ui.dscroll.min(max_scroll);
         for l in lines.iter().skip(ui.dscroll).take(body_h) {
             rows.push(format!(" {l}"));
+        }
+        // images whose reserved rows are fully on screen
+        if let (Some(proto), Some(c)) = (ui.img, m.cells.get(di)) {
+            for sl in &slots {
+                if sl.start < ui.dscroll || sl.start + sl.rows as usize > ui.dscroll + body_h {
+                    continue;
+                }
+                let key = (di, sl.k, sl.cols, sl.rows);
+                if !ui.img_cache.contains_key(&key) {
+                    let (mime, data) = &c.images[sl.k];
+                    let esc = crate::mermaid::image_escape(mime, data, proto, sl.cols, sl.rows, ui.cell_px)
+                        .unwrap_or_default();
+                    ui.img_cache.insert(key, esc);
+                }
+                overlays.push((sl.start - ui.dscroll + 1, ui.img_cache[&key].clone()));
+            }
         }
         status_left = String::new();
         status_right = format!(
@@ -1218,6 +1292,18 @@ fn draw(tty: &mut Tty, ui: &mut Ui, m: &Model, source: &str) {
     let pad = w.saturating_sub(lw + right_plain_w);
     frame += &fit(&format!("\x1b[7m{status_left}{}{status_right}", " ".repeat(pad)), w);
     frame += "\x1b[K";
+    for (row, esc) in &overlays {
+        frame += &format!("\x1b[{row};2H{esc}");
+    }
+    if frame == ui.last_frame {
+        return;
+    }
+    ui.last_frame = frame.clone();
+    if ui.img == Some(Proto::Kitty) && (ui.images_on_screen || !overlays.is_empty()) {
+        // remove previously placed images before redrawing
+        tty.write("\x1b_Ga=d,d=A,q=2\x1b\\");
+    }
+    ui.images_on_screen = !overlays.is_empty();
     tty.write(&frame);
 }
 
@@ -1254,16 +1340,30 @@ fn turn_start(m: &Model, sel: usize, back: bool) -> usize {
 
 /// Run the TUI. `on_line` handles passthrough/saving and parses a raw line;
 /// `on_event` feeds side outputs (diagram). Returns when the user quits.
+/// How the browser runs.
+pub struct RunOpts<'a> {
+    /// shown in the status bar ("live" or the file name)
+    pub source: &'a str,
+    /// live pipe: keep consuming after the user quits so the producer and -o stay intact
+    pub drain_on_quit: bool,
+    pub hide_thinking: bool,
+    /// (protocol, cell size in px) when the terminal can show images
+    pub images: Option<(Proto, (u32, u32))>,
+}
+
 pub fn run(
     rx: Receiver<Input>,
     tx: Sender<Input>,
-    source: &str,
-    // live pipe: keep consuming after the user quits so the producer and -o stay intact
-    drain_on_quit: bool,
-    hide_thinking: bool,
+    opts: RunOpts,
     mut on_line: impl FnMut(&[u8]) -> Option<Result<Value, String>>,
     mut on_event: impl FnMut(&Value, bool),
 ) -> Result<()> {
+    let RunOpts {
+        source,
+        drain_on_quit,
+        hide_thinking,
+        images,
+    } = opts;
     let mut tty = Tty::open()?;
     let stop = Arc::new(AtomicBool::new(false));
     spawn_keys(tty.file.try_clone()?, tx, stop.clone());
@@ -1283,7 +1383,17 @@ pub fn run(
         dmatch: None,
         reveal: Reveal::Cell,
         help: false,
+        img: None,
+        cell_px: (10, 20),
+        img_cache: HashMap::new(),
+        last_frame: String::new(),
+        body_rows: 0,
+        images_on_screen: false,
     };
+    if let Some((proto, cell)) = images {
+        ui.img = Some(proto);
+        ui.cell_px = cell;
+    }
     let mut lineno = 0usize;
     let mut dirty = true;
     let mut last_draw = Instant::now() - Duration::from_secs(1);
@@ -1731,6 +1841,12 @@ mod hide_thinking {
             dmatch: None,
             reveal: Reveal::Cell,
             help: false,
+            img: None,
+            cell_px: (10, 20),
+            img_cache: HashMap::new(),
+            last_frame: String::new(),
+            body_rows: 0,
+            images_on_screen: false,
         };
         // j walks only non-thinking cells
         let mut i = 0;
@@ -1788,6 +1904,12 @@ mod search {
             dmatch: None,
             reveal: Reveal::Cell,
             help: false,
+            img: None,
+            cell_px: (10, 20),
+            img_cache: HashMap::new(),
+            last_frame: String::new(),
+            body_rows: 0,
+            images_on_screen: false,
         }
     }
 
@@ -1917,6 +2039,12 @@ mod status_row {
             dmatch: None,
             reveal: Reveal::Cell,
             help: false,
+            img: None,
+            cell_px: (10, 20),
+            img_cache: HashMap::new(),
+            last_frame: String::new(),
+            body_rows: 0,
+            images_on_screen: false,
         };
         handle_key(Key::Char('?'), &mut u, &m, (80, 24));
         assert!(u.help);
@@ -2034,6 +2162,8 @@ pub struct CellPrinter {
     cur_turn: usize,
     color: bool,
     out: Box<dyn Write>,
+    /// draw image blocks with this protocol (and cell size)
+    pub images: Option<(Proto, (u32, u32))>,
 }
 
 impl CellPrinter {
@@ -2044,6 +2174,7 @@ impl CellPrinter {
             cur_turn: 0,
             color,
             out,
+            images: None,
         }
     }
 
@@ -2100,10 +2231,23 @@ impl CellPrinter {
                 self.cur_turn = c.turn;
             }
             lines.extend(cell_lines(c, &self.m, cw));
-            lines.push(String::new());
+            let images = c.images.clone();
             for l in lines {
                 self.emit(&l);
             }
+            if let (Some((proto, cell)), true) = (self.images, self.color) {
+                let max_cols = (cw.saturating_sub(2) as u32).min(60);
+                for (mime, data) in &images {
+                    let Some((w, h)) = crate::mermaid::image_dims(data) else {
+                        continue;
+                    };
+                    let ((cols, rows), _) = crate::mermaid::fit_cells(w, h, max_cols, 12, cell);
+                    if let Ok(esc) = crate::mermaid::image_escape(mime, data, proto, cols, rows, cell) {
+                        let _ = self.out.write_all(format!("  {esc}\n").as_bytes());
+                    }
+                }
+            }
+            self.emit("");
             self.printed += 1;
         }
         if all
@@ -2146,4 +2290,57 @@ fn plain_badges(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+#[cfg(test)]
+mod image_slots {
+    use super::*;
+
+    #[test]
+    fn slots_are_reserved_under_placeholders() {
+        let mut pm = resvg::tiny_skia::Pixmap::new(200, 100).unwrap();
+        pm.fill(resvg::tiny_skia::Color::WHITE);
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(crate::mermaid::png_bytes(&pm).unwrap());
+        let mut m = Model::new();
+        m.event(
+            &serde_json::json!({"type": "message_end", "message": {"role": "user", "content": [
+                {"type": "text", "text": "look"}, {"type": "image", "mimeType": "image/png", "data": b64}]}}),
+            1,
+        );
+        let c = &m.cells[0];
+        assert_eq!(c.images.len(), 1);
+        let mut ui = Ui {
+            sel: 0,
+            follow: false,
+            top: 0,
+            detail: None,
+            dscroll: 0,
+            hide_thinking: false,
+            hide_backend: false,
+            cache: HashMap::new(),
+            input: None,
+            query: None,
+            msg: None,
+            dmatch: None,
+            reveal: Reveal::Cell,
+            help: false,
+            img: None,
+            cell_px: (10, 20),
+            img_cache: HashMap::new(),
+            last_frame: String::new(),
+            body_rows: 0,
+            images_on_screen: false,
+        };
+        let lines = detail_lines(c, &m, 80);
+        let (same, none) = with_image_slots(lines.clone(), c, &ui, 80, 40);
+        assert_eq!((same.len(), none.len()), (lines.len(), 0), "no protocol → no slots");
+        ui.img = Some(Proto::Kitty);
+        let (out, slots) = with_image_slots(lines.clone(), c, &ui, 80, 40);
+        assert_eq!(slots.len(), 1);
+        // 200x100 px in 10x20 px cells → 20 cols x 5 rows, reserved right under the placeholder
+        assert_eq!((slots[0].cols, slots[0].rows), (20, 5));
+        assert!(strip_ansi(&out[slots[0].start - 1]).contains("[image · image/png"));
+        assert_eq!(out.len(), lines.len() + 5);
+    }
 }

@@ -78,6 +78,11 @@ SUBCOMMANDS:
   trace_block replay FILE       re-stream a recorded trace with realistic timing (testing)
   (each takes --help)
 
+IMAGES (image blocks sent to / returned from the model):
+  --images MODE      auto (default: ask the terminal) | kitty | sixel | iterm | off
+                     draws them in the browser's detail view (l) and in the scroll view;
+                     otherwise they are shown as [image · <type> · <size>] placeholders
+
 OTHER:
   --plain            force plain output (no colors / cursor moves)
   -q, --quiet        no view on stderr (output files still written)
@@ -100,6 +105,7 @@ struct Args {
     theme: String,
     label_width: usize,
     plain: bool,
+    images: String,
     trajectory: Option<PathBuf>,
     interactive: bool,
     scroll: bool,
@@ -118,6 +124,7 @@ fn parse_args() -> Result<Args> {
         theme: "modern".into(),
         label_width: 60,
         plain: false,
+        images: "auto".into(),
         trajectory: None,
         interactive: false,
         scroll: false,
@@ -165,6 +172,7 @@ fn parse_args() -> Result<Args> {
             "--theme" => a.theme = val("--theme")?,
             "--label-width" => a.label_width = val("--label-width")?.parse().context("--label-width")?,
             "--plain" => a.plain = true,
+            "--images" => a.images = val("--images")?,
             "-i" | "--interactive" => a.interactive = true,
             "--scroll" => a.scroll = true,
             "-o" | "--save" => a.save = Some(PathBuf::from(val("--save")?)),
@@ -278,7 +286,14 @@ fn run() -> Result<()> {
                 w.update(dia.source());
             }
         };
-        tui::run(rx, tx, "live", true, args.no_thinking, on_line, on_event)?;
+        let images = image_capability(&args.images)?;
+        let opts = tui::RunOpts {
+            source: "live",
+            drain_on_quit: true,
+            hide_thinking: args.no_thinking,
+            images,
+        };
+        tui::run(rx, tx, opts, on_line, on_event)?;
         if let Some(w) = writer {
             w.finish();
         }
@@ -306,6 +321,9 @@ fn run() -> Result<()> {
         }
     };
 
+    // terminal graphics for image blocks in the scroll view
+    let scroll_images = if tty { image_capability(&args.images)? } else { None };
+    term.images = scroll_images;
     // stdin reader thread so the main loop can tick timers while waiting
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1024);
     std::thread::spawn(move || {
@@ -401,7 +419,9 @@ fn run() -> Result<()> {
                 } else {
                     Box::new(std::io::stderr())
                 };
-                tui::CellPrinter::new(tty, sink)
+                let mut p = tui::CellPrinter::new(tty, sink);
+                p.images = scroll_images;
+                p
             });
             if let Some((sev, sl)) = pending_session.take() {
                 p.event(&sev, sl);
@@ -469,7 +489,9 @@ fn browse(args: &[String]) -> Result<()> {
     let mut file = None;
     let mut follow = true;
     let mut hide_thinking = false;
-    for a in args {
+    let mut images_mode = String::from("auto");
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
             "-h" | "--help" => {
                 println!(
@@ -479,6 +501,7 @@ fn browse(args: &[String]) -> Result<()> {
             }
             "--no-follow" => follow = false,
             "--no-thinking" => hide_thinking = true,
+            "--images" => images_mode = it.next().context("--images needs a value")?.clone(),
             p if !p.starts_with('-') && file.is_none() => file = Some(PathBuf::from(p)),
             other => bail!("browse: unknown argument '{other}'"),
         }
@@ -515,5 +538,57 @@ fn browse(args: &[String]) -> Result<()> {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    tui::run(rx, tx, &name, false, hide_thinking, parse_line, |_, _| {})
+    let images = image_capability(&images_mode)?;
+    let opts = tui::RunOpts {
+        source: &name,
+        drain_on_quit: false,
+        hide_thinking,
+        images,
+    };
+    tui::run(rx, tx, opts, parse_line, |_, _| {})
+}
+
+/// Which image protocol to draw with (and the terminal cell size), per `--images`.
+/// `auto` asks the terminal (kitty graphics query + DA1); None → placeholders only.
+fn image_capability(mode: &str) -> Result<Option<(Proto, (u32, u32))>> {
+    if mode == "off" || !std::io::stderr().is_terminal() {
+        return Ok(None);
+    }
+    // cell size from the window-size ioctl when the terminal reports pixels; the capability probe
+    // (kitty graphics query + DA1 + cell-size query) only when asked for `auto` or pixels are unknown
+    let ioctl_cell = tty_cell_px();
+    let (probed, probed_cell) = if mode == "auto" || ioctl_cell.is_none() {
+        mermaid::probe_terminal()
+    } else {
+        (None, None)
+    };
+    let cell = ioctl_cell.or(probed_cell).unwrap_or((10, 20));
+    let proto = match mode {
+        "auto" => match probed {
+            Some(p @ (Proto::Kitty | Proto::Sixel)) => Some(p),
+            _ if matches!(std::env::var("TERM_PROGRAM").as_deref(), Ok("iTerm.app" | "WezTerm")) => Some(Proto::Iterm),
+            _ => None,
+        },
+        other => match Proto::parse(other) {
+            Some(Proto::Text) | None => bail!("--images: expected auto|kitty|sixel|iterm|off, got '{other}'"),
+            Some(p) => Some(p),
+        },
+    };
+    Ok(proto.map(|p| (p, cell)))
+}
+
+/// Terminal cell size in pixels from TIOCGWINSZ on /dev/tty, when the terminal reports pixels.
+fn tty_cell_px() -> Option<(u32, u32)> {
+    use std::os::fd::AsRawFd;
+    let tty = std::fs::File::open("/dev/tty").ok()?;
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    if unsafe { libc::ioctl(tty.as_raw_fd(), libc::TIOCGWINSZ, &mut ws) } != 0 {
+        return None;
+    }
+    (ws.ws_col > 0 && ws.ws_row > 0 && ws.ws_xpixel > 0 && ws.ws_ypixel > 0).then(|| {
+        (
+            ws.ws_xpixel as u32 / ws.ws_col as u32,
+            ws.ws_ypixel as u32 / ws.ws_row as u32,
+        )
+    })
 }

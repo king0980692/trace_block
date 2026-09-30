@@ -284,3 +284,18 @@ fn images_are_shown_as_placeholders_not_base64() {
         assert!(!err.contains("iVBORw0KGgo"), "base64 must not be printed:\n{err}");
     }
 }
+
+#[test]
+fn no_graphics_escapes_when_stderr_is_not_a_terminal() {
+    let img = serde_json::json!({"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo="});
+    let ev = serde_json::json!({"type": "message_end", "message": {"role": "user", "content": [img]}});
+    let input = format!("{ev}\n").into_bytes();
+    for mode in ["kitty", "sixel", "auto"] {
+        let (_, err) = run(&["--scroll", "--images", mode], &input);
+        assert!(err.contains("[image · image/png · 8 B]"), "{err}");
+        assert!(
+            !err.contains("\x1b_G") && !err.contains("\x1bP"),
+            "graphics escapes in non-tty output ({mode})"
+        );
+    }
+}
