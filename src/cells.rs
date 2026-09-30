@@ -228,6 +228,9 @@ pub struct Model {
     pub model: Option<ModelInfo>,
     session_cell: Option<usize>,
     endpoints: HashMap<String, String>,
+    /// input is a saved session log (pi `~/.pi/agent/sessions`, Claude Code `~/.claude/projects`),
+    /// not a live event stream: no deltas, no completion marker
+    pub session_log: bool,
     /// per tool: (name, calls, failures)
     pub tool_stats: Vec<(String, usize, usize)>,
     pub usage: Usage,
@@ -257,6 +260,7 @@ impl Model {
             model: None,
             session_cell: None,
             endpoints: load_endpoints(),
+            session_log: false,
             tool_stats: Vec::new(),
             usage: Usage::default(),
             retries: 0,
@@ -299,6 +303,15 @@ impl Model {
 
     pub fn finish(&mut self) {
         self.eof = true;
+        if let Some(id) = self.cmsg_order.last().cloned() {
+            self.claude_finalize(&id);
+        }
+        if self.session_log && !self.settled {
+            let n = self.cells.last().map(|c| c.lineno).unwrap_or(0);
+            let i = self.push(Kind::Other, n);
+            self.cells[i].title = "end of session log (session logs record no completion marker)".into();
+            return;
+        }
         if !self.settled {
             let n = self.cells.last().map(|c| c.lineno).unwrap_or(0);
             let i = self.push(Kind::Unfinished, n);
@@ -335,6 +348,134 @@ impl Model {
             }
             self.final_idx = Some(i);
             self.final_turn = Some(turn);
+        }
+    }
+
+    /// pi system message: prompt sections + tool definitions (stream `message_start` or a session-log entry).
+    fn system_message(&mut self, m: &Value, lineno: usize) {
+        self.tools_available = offered_tools(m);
+        let i = self.push(Kind::System, lineno);
+        self.cells[i].title = format!("system prompt · {} tools", self.tools_available.len());
+        let mut body = String::new();
+        if let Some(sec) = m["sections"].as_object() {
+            for (k, v) in sec {
+                body += &format!("── {k} ──\n{}\n\n", v.as_str().unwrap_or(""));
+            }
+        }
+        self.cells[i].body = body.trim_end().to_string();
+        if let Some(added) = m["toolsAdded"].as_array().filter(|a| !a.is_empty()) {
+            let t = self.push(Kind::Tools, lineno);
+            self.cells[t].title = format!("system message · toolsAdded ({})", added.len());
+            self.cells[t].body = serde_json::to_string_pretty(added).unwrap_or_default();
+        }
+        if let Some(removed) = m["toolsRemoved"].as_array().filter(|a| !a.is_empty()) {
+            let t = self.push(Kind::Tools, lineno);
+            let names: Vec<String> = removed
+                .iter()
+                .map(|r| r["name"].as_str().map(String::from).unwrap_or_else(|| r.to_string()))
+                .collect();
+            self.cells[t].title = format!("tools removed: {}", names.join(", "));
+            self.cells[t].body = serde_json::to_string_pretty(removed).unwrap_or_default();
+        }
+    }
+
+    /// One recorded message of a pi session log.
+    fn pi_session_message(&mut self, m: &Value, lineno: usize) {
+        self.session_log = true;
+        match m["role"].as_str().unwrap_or("") {
+            "system" => self.system_message(m, lineno),
+            "user" => {
+                let text = m["content"]
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|c| c["text"].as_str())
+                    .or_else(|| m["content"].as_str())
+                    .unwrap_or("");
+                let i = self.push(Kind::User, lineno);
+                self.cells[i].body = text.to_string();
+            }
+            "assistant" => {
+                // each assistant message is one LLM call → one turn
+                self.observe_model(m, lineno);
+                let model = self.model.as_ref().map(|mi| mi.model.clone()).unwrap_or_default();
+                self.turns.push(TurnInfo {
+                    at: self.elapsed(),
+                    model,
+                    ..Default::default()
+                });
+                let turn = self.turn();
+                for b in m["content"].as_array().into_iter().flatten() {
+                    match b["type"].as_str().unwrap_or("") {
+                        "thinking" => {
+                            let i = self.push(Kind::Thinking, lineno);
+                            self.cells[i].body = b["thinking"].as_str().unwrap_or("").to_string();
+                        }
+                        "text" => {
+                            let i = self.push(Kind::Answer, lineno);
+                            self.cells[i].body = b["text"].as_str().unwrap_or("").to_string();
+                        }
+                        "toolCall" => {
+                            let name = b["name"].as_str().unwrap_or("?").to_string();
+                            let i = self.push(Kind::Tool, lineno);
+                            let c = &mut self.cells[i];
+                            c.tool = Some(name.clone());
+                            c.status = Status::Running;
+                            c.title = args_summary(&b["arguments"]);
+                            c.args_full = serde_json::to_string_pretty(&b["arguments"]).unwrap_or_default();
+                            if let Some(id) = b["id"].as_str() {
+                                self.by_call.insert(id.to_string(), i);
+                            }
+                            if let Some(t) = self.turns.last_mut() {
+                                t.tools.push(name.clone());
+                            }
+                            match self.tool_stats.iter_mut().find(|t| t.0 == name) {
+                                Some(t) => t.1 += 1,
+                                None => self.tool_stats.push((name, 1, 0)),
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                self.usage.add(&m["usage"]);
+                if m["stopReason"] == "error" {
+                    let i = self.push(Kind::ModelError, lineno);
+                    self.cells[i].title = m["errorMessage"].as_str().unwrap_or("unknown error").to_string();
+                }
+                self.response_cell(m, lineno);
+                if let Some(t) = self.turns.last_mut() {
+                    t.stop = m["stopReason"].as_str().map(String::from);
+                    let (i, o) = (
+                        m["usage"]["input"].as_u64().unwrap_or(0),
+                        m["usage"]["output"].as_u64().unwrap_or(0),
+                    );
+                    if i + o > 0 {
+                        t.usage = Some((i, o));
+                    }
+                }
+                let stop = m["stopReason"].as_str().unwrap_or("");
+                if !matches!(stop, "toolUse" | "error" | "aborted" | "") {
+                    self.mark_final(turn);
+                }
+            }
+            "toolResult" => {
+                let Some(&i) = m["toolCallId"].as_str().and_then(|id| self.by_call.get(id)) else {
+                    return;
+                };
+                let err = m["isError"].as_bool().unwrap_or(false);
+                let c = &mut self.cells[i];
+                c.status = if err { Status::Err } else { Status::Ok };
+                c.body = pretty_if_json(&result_text(m));
+                c.secs = None; // no execution timing is recorded in a session log
+                if err && let Some(t) = self.tool_stats.iter_mut().find(|t| Some(&t.0) == c.tool.as_ref()) {
+                    t.2 += 1;
+                }
+                self.touch(i);
+            }
+            other => {
+                let i = self.push(Kind::Other, lineno);
+                self.cells[i].title = format!("message ({other})");
+                self.cells[i].body = serde_json::to_string_pretty(m).unwrap_or_default();
+            }
         }
     }
 
@@ -429,30 +570,7 @@ impl Model {
                     self.observe_model(m, lineno);
                 }
                 if m["role"] == "system" {
-                    self.tools_available = offered_tools(m);
-                    let i = self.push(Kind::System, lineno);
-                    self.cells[i].title = format!("system prompt · {} tools", self.tools_available.len());
-                    let mut body = String::new();
-                    if let Some(sec) = m["sections"].as_object() {
-                        for (k, v) in sec {
-                            body += &format!("── {k} ──\n{}\n\n", v.as_str().unwrap_or(""));
-                        }
-                    }
-                    self.cells[i].body = body.trim_end().to_string();
-                    if let Some(added) = m["toolsAdded"].as_array().filter(|a| !a.is_empty()) {
-                        let t = self.push(Kind::Tools, lineno);
-                        self.cells[t].title = format!("system message · toolsAdded ({})", added.len());
-                        self.cells[t].body = serde_json::to_string_pretty(added).unwrap_or_default();
-                    }
-                    if let Some(removed) = m["toolsRemoved"].as_array().filter(|a| !a.is_empty()) {
-                        let t = self.push(Kind::Tools, lineno);
-                        let names: Vec<String> = removed
-                            .iter()
-                            .map(|r| r["name"].as_str().map(String::from).unwrap_or_else(|| r.to_string()))
-                            .collect();
-                        self.cells[t].title = format!("tools removed: {}", names.join(", "));
-                        self.cells[t].body = serde_json::to_string_pretty(removed).unwrap_or_default();
-                    }
+                    self.system_message(m, lineno);
                 }
             }
             "message_update" => {
@@ -567,10 +685,13 @@ impl Model {
                 self.cells[i].title = format!("settled in {}", crate::util::human_dur(self.elapsed()));
             }
             "agent_start" | "agent_end" | "queue_update" | "bash_execution_update" | "entry_appended" => {}
+            // pi session log (~/.pi/agent/sessions): complete messages, no deltas
+            "message" => self.pi_session_message(&ev["message"], lineno),
             "model_change" | "thinking_level_change" => {
                 let i = self.push(Kind::Other, lineno);
                 let pick = |k: &str| ev[k].as_str().map(String::from);
                 let what = pick("model")
+                    .or_else(|| pick("modelId"))
                     .map(|mo| match pick("provider") {
                         Some(p) => format!("{p}/{mo}"),
                         None => mo,
@@ -604,12 +725,28 @@ impl Model {
     }
 }
 
-/// Claude Code `--output-format stream-json` event (pi never emits these types).
+/// Claude Code event: a stream-json event type pi never emits, or any transcript entry (Claude Code
+/// transcripts carry a camelCase `sessionId`; pi session entries never do).
 pub fn is_claude_event(ev: &Value) -> bool {
-    matches!(
-        ev["type"].as_str(),
-        Some("system" | "assistant" | "user" | "stream_event" | "result" | "rate_limit_event")
-    )
+    ev["sessionId"].is_string()
+        || matches!(
+            ev["type"].as_str(),
+            Some(
+                "system"
+                | "assistant"
+                | "user"
+                | "stream_event"
+                | "result"
+                | "rate_limit_event"
+                // transcript-only entry types (~/.claude/projects/*/<session>.jsonl)
+                | "attachment"
+                | "queue-operation"
+                | "atis-latch"
+                | "last-prompt"
+                | "cost-state"
+                | "summary"
+            )
+        )
 }
 
 /// Per-message bookkeeping for Claude Code streams.
@@ -715,7 +852,11 @@ impl Model {
         if let Some(t) = self.turns.get_mut(turn.saturating_sub(1)) {
             t.stop = stop.clone().or_else(|| Some("(not in stream)".into()));
             t.usage = Some((g("input_tokens"), g("output_tokens")));
-            t.secs = t.started.map(|s| s.elapsed().as_secs_f64());
+            t.secs = if self.session_log {
+                None
+            } else {
+                t.started.map(|s| s.elapsed().as_secs_f64())
+            };
         }
         if let Some(cm) = self.cmsgs.get_mut(id) {
             cm.response_cell = Some(i);
@@ -777,7 +918,69 @@ impl Model {
     fn claude_event(&mut self, ev: &Value, lineno: usize) {
         let ty = ev["type"].as_str().unwrap_or("");
         let sub = ev["subtype"].as_str().unwrap_or("");
+        // transcript entries (camelCase `sessionId`) vs stream-json events (`session_id`)
+        if let Some(sid) = ev["sessionId"].as_str() {
+            self.session_log = true;
+            if self.session_cell.is_none() {
+                let i = self.push(Kind::Session, lineno);
+                self.cells[i].title = format!("claude session {sid} (transcript)");
+                self.session_cell = Some(i);
+            }
+            // cwd/version/gitBranch are not on every entry: take them from the first one that has them
+            if let Some(si) = self.session_cell
+                && self.cells[si].body.is_empty()
+                && ev["cwd"].is_string()
+            {
+                let g = |k: &str| ev[k].as_str().unwrap_or("?").to_string();
+                self.cells[si].body = format!(
+                    "cwd  {}\nversion {}\ngitBranch {}",
+                    g("cwd"),
+                    g("version"),
+                    g("gitBranch")
+                );
+                self.cells[si].ver += 1;
+            }
+        }
         match (ty, sub) {
+            ("attachment", _) => {
+                let a = &ev["attachment"];
+                let at = a["type"].as_str().unwrap_or("?");
+                match at {
+                    // the full system prompt the CLI sent, as recorded
+                    "prompt_snapshot" => {
+                        let i = self.push(Kind::System, lineno);
+                        let parts: Vec<String> = a["systemPrompt"]
+                            .as_array()
+                            .map(|v| {
+                                v.iter()
+                                    .map(|p| p.as_str().map(String::from).unwrap_or_else(|| p.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        self.cells[i].title =
+                            format!("attachment/prompt_snapshot · system prompt ({} parts)", parts.len());
+                        self.cells[i].body = parts.join("\n\n── next part ──\n\n");
+                    }
+                    _ => {
+                        if at == "model"
+                            && let Some(mid) = a["identity"]["modelId"].as_str()
+                        {
+                            self.observe_model(&serde_json::json!({ "model": mid }), lineno);
+                        }
+                        let i = self.push(Kind::Other, lineno);
+                        self.cells[i].title = format!("attachment/{at}");
+                        self.cells[i].body = serde_json::to_string_pretty(ev).unwrap_or_default();
+                    }
+                }
+            }
+            ("queue-operation" | "atis-latch" | "last-prompt" | "cost-state" | "summary", _) => {
+                let i = self.push(Kind::Other, lineno);
+                self.cells[i].title = match ev["operation"].as_str() {
+                    Some(op) => format!("{ty} · {op}"),
+                    None => ty.to_string(),
+                };
+                self.cells[i].body = serde_json::to_string_pretty(ev).unwrap_or_default();
+            }
             ("system", "init") => {
                 let i = self.push(Kind::Session, lineno);
                 let g = |k: &str| ev[k].as_str().unwrap_or("?").to_string();
@@ -896,6 +1099,9 @@ impl Model {
                 }
                 let index = self.cmsgs[&id].assistant_events;
                 self.cmsgs.get_mut(&id).unwrap().assistant_events += 1;
+                if let Some(sr) = m["stop_reason"].as_str() {
+                    self.cmsgs.get_mut(&id).unwrap().stop_reason = Some(sr.to_string());
+                }
                 self.cmsgs.get_mut(&id).unwrap().recorded.push(ev.clone());
                 let block = &m["content"][0];
                 let existing = self.cmsgs[&id].blocks.get(index).copied().flatten();
@@ -903,6 +1109,13 @@ impl Model {
                     Some(i) => i,
                     None => self.claude_block(&id, index, block, lineno),
                 };
+                // transcripts record stop_reason on each entry: an answer block of an end_turn message
+                // is the final answer
+                if block["type"] == "text" && self.cmsgs[&id].stop_reason.as_deref() == Some("end_turn") {
+                    let turn = self.cmsgs[&id].turn;
+                    self.cells[i].body = block["text"].as_str().unwrap_or("").to_string();
+                    self.mark_final(turn);
+                }
                 // the assistant event carries the complete block: it is authoritative
                 let c = &mut self.cells[i];
                 match block["type"].as_str().unwrap_or("") {
@@ -933,10 +1146,11 @@ impl Model {
                         continue;
                     };
                     let err = b["is_error"].as_bool().unwrap_or(false);
+                    let live = !self.session_log;
                     let c = &mut self.cells[i];
                     c.status = if err { Status::Err } else { Status::Ok };
                     c.body = pretty_if_json(&claude_text(&b["content"]));
-                    c.secs = Some(c.started.elapsed().as_secs_f64());
+                    c.secs = live.then(|| c.started.elapsed().as_secs_f64());
                     if err && let Some(t) = self.tool_stats.iter_mut().find(|t| Some(&t.0) == c.tool.as_ref()) {
                         t.2 += 1;
                     }

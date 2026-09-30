@@ -202,3 +202,60 @@ fn help_and_bad_args() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn pi_session_log_is_rendered() {
+    let input = data("pi-session-synthetic.jsonl");
+    let (stdout, err) = run(&["--scroll"], &input);
+    assert_eq!(stdout, input);
+    for needle in [
+        "━━ pi session session-demo",
+        "model change → example/demo-model",
+        "tools available: [bash]",
+        "What is in ./docs?",
+        "I should list the docs directory.",
+        "┌ [bash] ls ./docs",
+        "└ ✓ [bash] 2 lines",
+        "⇄ LLM response · resp-1 · stop toolUse (tool_calls)",
+        "★ FINAL ANSWER",
+        "end of session log",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?} in:\n{err}");
+    }
+    // no completion marker in a session log is not an error, and no wall-clock timing is shown
+    assert!(!err.contains("stream ended without agent_settled"), "{err}");
+    assert!(!err.contains("0.0s"), "{err}");
+}
+
+#[test]
+fn claude_transcript_is_rendered() {
+    let input = data("claude-transcript-synthetic.jsonl");
+    let (stdout, err) = run(&["--scroll"], &input);
+    assert_eq!(stdout, input);
+    for needle in [
+        "━━ claude session 11111111-1111-1111-1111-111111111111 (transcript)",
+        "cwd  /work",
+        "▸ user",
+        "What is in ./docs?",
+        "attachment/prompt_snapshot · system prompt (2 parts)",
+        "Find the files.",
+        "┌ [Glob] docs/*.txt",
+        "stop tool_use",
+        "TURN 2 · FINAL",
+        "★ FINAL ANSWER",
+        "Two files: a.txt and b.txt.",
+        "stop end_turn",
+        "end of session log",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?} in:\n{err}");
+    }
+}
+
+#[test]
+fn session_log_trajectory_keeps_message_entries() {
+    let input = data("pi-session-synthetic.jsonl");
+    let out = tmp("pi-session-traj.jsonl");
+    run(&["-q", "--trajectory", out.to_str().unwrap()], &input);
+    let expected = lines_of_types(&input, |v| matches!(v["type"].as_str(), Some("session" | "message")));
+    assert_eq!(std::fs::read(&out).unwrap(), expected);
+}

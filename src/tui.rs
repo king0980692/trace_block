@@ -273,12 +273,14 @@ fn cell_lines(c: &Cell, m: &Model, cw: usize) -> Vec<String> {
             }
         }
         Kind::System => {
-            v.extend(badge_lines(
-                paint("2", "· tools available:"),
-                18,
-                &m.tools_available,
-                cw,
-            ));
+            if !m.tools_available.is_empty() {
+                v.extend(badge_lines(
+                    paint("2", "· tools available:"),
+                    18,
+                    &m.tools_available,
+                    cw,
+                ));
+            }
             v.push(paint("2;3", &format!("· {}  (l to read the prompt)", c.title)));
         }
         Kind::Tools => {
@@ -337,7 +339,7 @@ fn cell_lines(c: &Cell, m: &Model, cw: usize) -> Vec<String> {
                 v.push(format!(
                     "{}{}",
                     paint("2", "  ┊ "),
-                    paint("2;3", "(empty — no thinking text in the stream)")
+                    paint("2;3", "(empty — no thinking text recorded)")
                 ));
             }
             let lines = if c.body.trim().is_empty() {
@@ -418,12 +420,9 @@ fn cell_lines(c: &Cell, m: &Model, cw: usize) -> Vec<String> {
                     if lines.len() > TOOL_PREVIEW {
                         v.push(format!("{}{}", paint("34", "│ "), more(lines.len() - TOOL_PREVIEW)));
                     }
-                    let meta = format!(
-                        "{} · {} lines · {}",
-                        human_dur(c.secs.unwrap_or(0.0)),
-                        c.body.lines().count(),
-                        human_bytes(c.body.len())
-                    );
+                    // no duration when none was measured (session logs record no execution timing)
+                    let dur = c.secs.map(|s| format!("{} · ", human_dur(s))).unwrap_or_default();
+                    let meta = format!("{dur}{} lines · {}", c.body.lines().count(), human_bytes(c.body.len()));
                     v.push(if err {
                         format!(
                             "{} {} {}",
@@ -619,8 +618,20 @@ fn detail_lines(c: &Cell, m: &Model, cw: usize) -> Vec<String> {
                     "33",
                     &format!("running {}", human_dur(c.started.elapsed().as_secs_f64())),
                 ),
-                Status::Err => paint("1;31", &format!("FAILED · {}", human_dur(c.secs.unwrap_or(0.0)))),
-                _ => paint("32", &format!("ok · {}", human_dur(c.secs.unwrap_or(0.0)))),
+                Status::Err => paint(
+                    "1;31",
+                    &format!(
+                        "FAILED{}",
+                        c.secs.map(|s| format!(" · {}", human_dur(s))).unwrap_or_default()
+                    ),
+                ),
+                _ => paint(
+                    "32",
+                    &format!(
+                        "ok{}",
+                        c.secs.map(|s| format!(" · {}", human_dur(s))).unwrap_or_default()
+                    ),
+                ),
             };
             v.push(format!(
                 "{}  {status} · {} lines · {}",
@@ -969,7 +980,12 @@ fn turn_header(m: &Model, t: usize, cw: usize) -> String {
         format!(" TURN {t} ")
     };
     let model = info.map(|x| x.model.as_str()).filter(|s| !s.is_empty());
-    let clock = format!(" +{} ", human_dur(at));
+    // session logs are read at once: a wall-clock offset would be meaningless
+    let clock = if m.session_log {
+        " ".to_string()
+    } else {
+        format!(" +{} ", human_dur(at))
+    };
     let model_w = model.map(|mo| str_width(mo) + 3).unwrap_or(0);
     let fill = cw
         .saturating_sub(str_width(&label) + model_w + str_width(&clock) + 1)
@@ -2061,10 +2077,11 @@ impl CellPrinter {
             let i = self.printed;
             let c = &self.m.cells[i];
             let done = all
-                || if c.kind == Kind::Tool {
-                    c.status != Status::Running
-                } else {
-                    i + 1 < self.m.cells.len()
+                || match c.kind {
+                    Kind::Tool => c.status != Status::Running,
+                    // a transcript's first entries may lack cwd/version: wait for the entry that has them
+                    Kind::Session if c.body.is_empty() => false,
+                    _ => i + 1 < self.m.cells.len(),
                 };
             if !done {
                 break;

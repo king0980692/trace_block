@@ -38,7 +38,7 @@ src/
   util.rs        wrapping, truncation, badges, small helpers
 tests/
   cli.rs         end-to-end tests of the binary
-  data/          small synthetic streams (pi and Claude Code) — no third-party content
+  data/          small synthetic streams and session logs (pi and Claude Code) — no third-party content
 scripts/
   tui_drive.py   drive a TUI in a pty + pyte and print screen snapshots
   herdr_cast.py  record a herdr pane to an asciicast (demo recordings)
@@ -100,11 +100,27 @@ The final answer is the answer text of the turn whose `stopReason` is `stop`.
 Things to know: each assistant `message.id` is one API request (shown as one TURN); `assistant`
 events have `stop_reason: null`; `user` tool results can arrive before the stream's `message_delta`,
 so a streamed message is finalised at `message_stop`; the prompt is not in the stream; thinking
-blocks often have empty text. Without partial messages the stop reason is shown as absent, and the
+blocks have empty text when the request carried the `redact-thinking` beta (interactive CLI in 2.1.285,
+not `claude -p`). Without partial messages the stop reason is shown as absent, and the
 final answer is the answer cell whose text equals `result.result`.
 
 Detection: `cells::is_claude_event` — the Claude event types (`system`, `assistant`, `user`,
 `stream_event`, `result`, `rate_limit_event`) never occur in pi streams.
+
+### Session logs
+
+- **pi** (`~/.pi/agent/sessions/…/<ts>_<id>.jsonl`): the same `session` header line, then entries with
+  `id`/`parentId`: `model_change`, `thinking_level_change`, and `message` entries holding complete
+  `AgentMessage`s (`system`, `user`, `assistant`, `toolResult`). Handled by
+  `Model::pi_session_message` (each assistant message = one turn; the final answer from its
+  `stopReason`). In the scroll view the first `session` line is held until the next line shows whether
+  this is a live stream or a session log.
+- **Claude Code** (`~/.claude/projects/<cwd>/<session>.jsonl`): `user` / `assistant` entries shaped like
+  stream-json (one content block per assistant entry) plus transcript-only entries (`attachment`,
+  `queue-operation`, `last-prompt`, `ai-title`, `mode`, …). Every entry has a camelCase `sessionId`,
+  which is how they are recognised; assistant entries carry the real `stop_reason`.
+- Both set `Model::session_log`: no wall-clock timings are shown (turn clock, tool durations) and the
+  end of input is `end of session log` rather than "unfinished".
 
 ### Adding another producer
 

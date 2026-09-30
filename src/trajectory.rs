@@ -2,7 +2,8 @@
 //!
 //! `.md`  → readable Markdown of every recorded message (nothing truncated or inferred)
 //! other  → JSONL, byte-for-byte as received: for pi the `session` line plus every `message_end`
-//!          line; for Claude Code stream-json the `system/init`, `assistant`, `user` and `result` lines
+//!          line (session logs: every `message` entry); for Claude Code the `system/init`,
+//!          `assistant`, `user` and `result` lines
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -68,7 +69,10 @@ impl Trajectory {
 
     fn jsonl(&mut self, raw: &[u8], ev: &Value) -> std::io::Result<()> {
         let keep = match ev["type"].as_str() {
-            Some("session") | Some("message_end") | Some("assistant") | Some("user") | Some("result") => true,
+            // live streams: session + message_end / Claude assistant, user, result;
+            // session logs: pi `message` entries (Claude transcripts reuse assistant/user)
+            Some("session") | Some("message_end") | Some("message") | Some("assistant") | Some("user")
+            | Some("result") => true,
             Some("system") => ev["subtype"] == "init",
             _ => false,
         };
@@ -97,7 +101,7 @@ impl Trajectory {
                 self.turn += 1;
                 s += &format!("---\n\n## turn {}\n\n", self.turn);
             }
-            "message_end" => message_md(&mut s, &ev["message"]),
+            "message_end" | "message" => message_md(&mut s, &ev["message"]),
             "system" if ev["subtype"] == "init" => {
                 s += &format!("# claude session {}\n\n", ev["session_id"].as_str().unwrap_or("?"));
                 for k in ["cwd", "model", "claude_code_version", "permissionMode", "apiKeySource"] {

@@ -72,7 +72,8 @@ LIVE MERMAID DIAGRAM (pi streams; user ↔ agent ↔ tools, rendered in-process 
   --label-width N    max characters per diagram label (default 60)
 
 SUBCOMMANDS:
-  trace_block browse FILE       the browser on a saved trace (follows the file while it grows)
+  trace_block browse FILE       the browser on a saved trace or a session log (~/.pi/agent/sessions,
+                                ~/.claude/projects); follows the file while it grows
   trace_block view PATH.mmd     redraw the diagram in place whenever PATH.mmd changes (second pane)
   trace_block replay FILE       re-stream a recorded trace with realistic timing (testing)
   (each takes --help)
@@ -333,6 +334,8 @@ fn run() -> Result<()> {
     let mut last_running_refresh = Instant::now();
     let mut inlined_final = false;
     let mut printer: Option<tui::CellPrinter> = None;
+    let mut pending_session: Option<(serde_json::Value, usize)> = None;
+    let mut lineno_of_first_event: Option<usize> = None;
 
     loop {
         let raw = match rx.recv_timeout(Duration::from_millis(500)) {
@@ -377,8 +380,21 @@ fn run() -> Result<()> {
         if let Some(t) = traj.as_mut() {
             t.line(&raw, &ev);
         }
-        // Claude Code stream-json: rendered through the cell model
-        if printer.is_some() || cells::is_claude_event(&ev) {
+        // A pi `session` line starts both live streams and saved session logs: hold it until the
+        // next event shows which one this is.
+        if lineno_of_first_event.is_none() {
+            lineno_of_first_event = Some(lineno);
+            if ev["type"] == "session" {
+                pending_session = Some((ev.clone(), lineno));
+                continue;
+            }
+        }
+        let session_log_entry = matches!(
+            ev["type"].as_str(),
+            Some("message" | "model_change" | "thinking_level_change")
+        );
+        // Claude Code streams/transcripts and pi session logs: rendered through the cell model
+        if printer.is_some() || cells::is_claude_event(&ev) || (session_log_entry && pending_session.is_some()) {
             let p = printer.get_or_insert_with(|| {
                 let sink: Box<dyn Write> = if args.quiet {
                     Box::new(std::io::sink())
@@ -387,8 +403,14 @@ fn run() -> Result<()> {
                 };
                 tui::CellPrinter::new(tty, sink)
             });
+            if let Some((sev, sl)) = pending_session.take() {
+                p.event(&sev, sl);
+            }
             p.event(&ev, lineno);
             continue;
+        }
+        if let Some((sev, _)) = pending_session.take() {
+            term.event(&sev);
         }
         term.event(&ev);
         if want_diagram
@@ -407,6 +429,9 @@ fn run() -> Result<()> {
         }
     }
 
+    if let Some((sev, _)) = pending_session.take() {
+        term.event(&sev);
+    }
     if let Some(p) = printer.as_mut() {
         p.finish();
         if let Some(w) = writer {

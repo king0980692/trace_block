@@ -41,6 +41,11 @@ fn delay_after(line: &str) -> f64 {
             _ => 0.05,
         },
         "assistant" if ev["message"]["content"][0]["type"] == "tool_use" => 1.5,
+        // session logs: one complete message per line
+        "message" => match ev["message"]["role"].as_str().unwrap_or("") {
+            "assistant" => 1.0,
+            _ => 0.3,
+        },
         _ => 0.05,
     }
 }

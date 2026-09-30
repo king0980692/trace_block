@@ -54,7 +54,7 @@ it runs**, without hiding anything.
 
 **Transparency is the design rule:** the view shows what is recorded in the stream — no
 reconstructed values, no guessed metrics, no interpretive labels. When something is not in the
-stream it says so (`stop (not in stream)`, `(empty — no thinking text in the stream)`), and the one
+stream it says so (`stop (not in stream)`, `(empty — no thinking text recorded)`), and the one
 piece of context that does not come from the stream (a provider's `baseUrl` from pi's
 `models.json`) is labelled with its source. Every cell can be opened (`l`) to see the recorded JSON.
 
@@ -76,8 +76,8 @@ piece of context that does not come from the stream (a provider's `baseUrl` from
   [mermaid-rs-renderer](https://github.com/1jehuang/mermaid-rs-renderer) — no browser, no Node:
   live `.mmd`/`.svg`/`.png` files, inline terminal images, or a live viewer pane (`trace_block view`)
   using kitty graphics, sixel, iTerm2 or a character-cell fallback.
-- **Offline**: `trace_block browse FILE` reopens a saved run; `trace_block replay FILE` re-streams it
-  with realistic timing.
+- **Offline**: `trace_block browse FILE` reopens a saved run — including the session logs pi and
+  Claude Code keep on disk; `trace_block replay FILE` re-streams it with realistic timing.
 
 ## Install
 
@@ -151,6 +151,37 @@ trace_block replay run.json | trace_block    # re-stream with realistic timing
 cat run.json | trace_block -q --trajectory run.md >/dev/null   # export a trajectory afterwards
 ```
 
+## Session logs
+
+Both agents also save every session to disk, and `trace_block` reads those files directly — in the
+browser, the scroll view, `--trajectory` and `replay`:
+
+| Agent | Where | Written by |
+|---|---|---|
+| pi | `~/.pi/agent/sessions/--<cwd>--/<timestamp>_<id>.jsonl` | interactive and `-p` runs (not `--no-session`) |
+| Claude Code | `~/.claude/projects/<cwd>/<session-id>.jsonl` | interactive and `-p` runs |
+
+```bash
+trace_block browse ~/.pi/agent/sessions/--work--/2026-01-01T00-00-00-000Z_<id>.jsonl
+trace_block browse ~/.claude/projects/-work/<session-id>.jsonl
+trace_block browse "$(ls -t ~/.claude/projects/*/*.jsonl | head -1)"     # the newest Claude Code session
+trace_block replay <session-log> | trace_block                            # re-play it with pacing
+```
+
+The format is detected automatically. A session log holds complete messages rather than a live
+event stream, so the view shows what it records and nothing more:
+
+- **pi session logs** — the system prompt and tool definitions, the prompt, each assistant message
+  (one turn per LLM call: thinking, text, tool calls, backend metadata), tool results, model and
+  thinking-level changes. No deltas and no tool timing are recorded, so none are shown.
+- **Claude Code transcripts** — richer than `-p` streams in some ways: the **prompt** itself, the
+  recorded **`stop_reason`** of every message (so the final answer is known), and the full **system
+  prompt** (`attachment/prompt_snapshot`). Other entries (`attachment/*`, `queue-operation`,
+  `last-prompt`, `ai-title`, `mode`, …) are shown as event cells with their raw JSON on `l`.
+  Transcripts contain account metadata (e.g. `attachment/session_context`, `credential_org`): mind
+  that before sharing a trajectory or a copy.
+- Neither format has a completion marker; the end of the file is shown as `end of session log`.
+
 ## The interactive browser
 
 Default when stderr is a terminal (`-i` forces it, `--scroll` disables it).
@@ -199,7 +230,7 @@ is narrow) and the position: model, source, `cell 12/40 · turn 5`, and `● liv
 |---|---|
 | `-o FILE` | the raw input stream, byte-for-byte, flushed per line |
 | `--trajectory FILE.md` | every recorded message as Markdown: system prompt sections + tool definitions, user, each assistant message (all recorded fields, thinking, text, tool calls), each tool result — including failed attempts |
-| `--trajectory FILE.jsonl` | the message lines, byte-exact: pi → `session` + every `message_end`; Claude Code → `system/init`, `assistant`, `user`, `result` |
+| `--trajectory FILE.jsonl` | the message lines, byte-exact: pi → `session` + every `message_end` (session logs: every `message` entry); Claude Code → `system/init`, `assistant`, `user`, `result` |
 | `--mmd` / `--svg` / `--png PATH` | the live Mermaid sequence diagram (pi streams), rewritten atomically as events arrive |
 
 ## Mermaid diagram and the live viewer
@@ -231,9 +262,12 @@ final summary. Colors and in-place rewrites only when stderr is a TTY; plain tex
   ask for approval. Offer only the tools you want (`--tools "Read Grep Glob"`) or allow specific
   commands (`--allowedTools "Bash(ls *)"`). If a user hook rewrites commands (e.g. to a wrapper), the
   allow rules no longer match: run with `--setting-sources ""`.
-- **Claude Code: `💭 thinking (empty — no thinking text in the stream)`** — Claude Code emits thinking
-  blocks with a signature but no text. The model did think: see the `system/thinking_tokens · estimated_tokens …`
-  cells and `thinking_tokens` in the result summary.
+- **Claude Code: `💭 thinking (empty — no thinking text recorded)`** — the request asked the API to
+  redact thinking (the `redact-thinking-…` beta), so the blocks carry only a signature. Whether that
+  beta is sent depends on the Claude Code mode and version: in a capture with 2.1.285 the interactive
+  CLI sent it (thinking empty) and `claude -p` did not (thinking text present). The model did think
+  either way: see the `system/thinking_tokens · estimated_tokens …` cells and `thinking_tokens` in the
+  result summary.
 - **pi: thinking appears although `thinking off`** — `thinking off` means pi does not request reasoning;
   models that always reason (e.g. gpt-oss) still return it, and pi records it.
 - **No image in `view`** — your terminal (or multiplexer) does not pass kitty/sixel graphics; use

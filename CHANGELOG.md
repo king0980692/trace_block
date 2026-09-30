@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Read the session logs pi (`~/.pi/agent/sessions`) and Claude Code (`~/.claude/projects`) keep on
+  disk: browse, scroll view, `--trajectory` and `replay`. Claude transcripts add the prompt, recorded
+  stop reasons and the system prompt (`attachment/prompt_snapshot`).
+- No wall-clock timings for session logs; `end of session log` instead of "unfinished".
+- Docs: thinking redaction in Claude Code depends on the mode/version (`redact-thinking` beta).
+
 ## v0.1.0
 
 First release.
