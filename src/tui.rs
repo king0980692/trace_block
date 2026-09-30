@@ -422,7 +422,7 @@ fn cell_lines(c: &Cell, m: &Model, cw: usize) -> Vec<String> {
                     }
                     // no duration when none was measured (session logs record no execution timing)
                     let dur = c.secs.map(|s| format!("{} · ", human_dur(s))).unwrap_or_default();
-                    let meta = format!("{dur}{} lines · {}", c.body.lines().count(), human_bytes(c.body.len()));
+                    let meta = format!("{dur}{}", crate::util::output_meta(&c.body));
                     v.push(if err {
                         format!(
                             "{} {} {}",
@@ -634,10 +634,9 @@ fn detail_lines(c: &Cell, m: &Model, cw: usize) -> Vec<String> {
                 ),
             };
             v.push(format!(
-                "{}  {status} · {} lines · {}",
+                "{}  {status} · {}",
                 paint("1;34", "output"),
-                c.body.lines().count(),
-                human_bytes(c.body.len())
+                crate::util::output_meta(&c.body)
             ));
             json_or_plain(&mut v, &c.body);
         }

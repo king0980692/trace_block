@@ -6,6 +6,10 @@
   disk: browse, scroll view, `--trajectory` and `replay`. Claude transcripts add the prompt, recorded
   stop reasons and the system prompt (`attachment/prompt_snapshot`).
 - No wall-clock timings for session logs; `end of session log` instead of "unfinished".
+- Image content blocks (pi and Claude Code; user messages and tool results) are shown as
+  `[image · <media type> · <size>]` placeholders instead of being dropped or dumped as base64;
+  tool summaries count images separately (`1 lines · 27 B · 1 image`).
+- Docs: sending images in pipe mode, and pi's `models.json` `input` requirement for custom models.
 - Docs: thinking redaction in Claude Code depends on the mode/version (`redact-thinking` beta).
 
 ## v0.1.0

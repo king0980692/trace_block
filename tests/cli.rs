@@ -259,3 +259,28 @@ fn session_log_trajectory_keeps_message_entries() {
     let expected = lines_of_types(&input, |v| matches!(v["type"].as_str(), Some("session" | "message")));
     assert_eq!(std::fs::read(&out).unwrap(), expected);
 }
+
+#[test]
+fn images_are_shown_as_placeholders_not_base64() {
+    // PNG signature, base64 → 8 bytes
+    let img_pi = serde_json::json!({"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo="});
+    let img_claude = serde_json::json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}});
+    let pi = [
+        serde_json::json!({"type": "session", "version": 3, "id": "s", "timestamp": "t", "cwd": "/w"}),
+        serde_json::json!({"type": "message_end", "message": {"role": "user", "content": [{"type": "text", "text": "what is this?"}, img_pi]}}),
+        serde_json::json!({"type": "tool_execution_start", "toolCallId": "c1", "toolName": "read", "args": {"path": "a.png"}}),
+        serde_json::json!({"type": "tool_execution_end", "toolCallId": "c1", "toolName": "read", "isError": false, "result": {"content": [{"type": "text", "text": "Read image file"}, img_pi]}}),
+        serde_json::json!({"type": "agent_settled"}),
+    ];
+    let claude = [
+        serde_json::json!({"type": "assistant", "session_id": "x", "message": {"id": "m1", "model": "c", "role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "a.png"}}], "stop_reason": null, "usage": {}}}),
+        serde_json::json!({"type": "user", "session_id": "x", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": [img_claude], "is_error": false}]}}),
+    ];
+    for events in [&pi[..], &claude[..]] {
+        let input: Vec<u8> = events.iter().flat_map(|e| format!("{e}\n").into_bytes()).collect();
+        let (stdout, err) = run(&["--scroll"], &input);
+        assert_eq!(stdout, input);
+        assert!(err.contains("[image · image/png · 8 B]"), "{err}");
+        assert!(!err.contains("iVBORw0KGgo"), "base64 must not be printed:\n{err}");
+    }
+}

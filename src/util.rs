@@ -111,20 +111,69 @@ pub fn human_dur(secs: f64) -> String {
     }
 }
 
-/// Concatenate the `text` parts of a `{"content":[{"type":"text","text":…}]}` result.
-pub fn result_text(v: &serde_json::Value) -> String {
-    let mut s = String::new();
-    if let Some(arr) = v.get("content").and_then(|c| c.as_array()) {
-        for part in arr {
-            if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
-                if !s.is_empty() {
-                    s.push('\n');
-                }
-                s.push_str(t);
-            }
-        }
+/// `[image · image/png · 8.0 KB]` for an image content block — pi `{type:"image", mimeType, data}` or
+/// Anthropic `{type:"image", source:{media_type, data}}`; the size is the decoded length of the
+/// recorded base64 data. None for any other block.
+pub fn image_placeholder(b: &serde_json::Value) -> Option<String> {
+    if b["type"] != "image" {
+        return None;
     }
-    s
+    let mime = b["mimeType"]
+        .as_str()
+        .or_else(|| b["source"]["media_type"].as_str())
+        .unwrap_or("?");
+    let data = b["data"].as_str().or_else(|| b["source"]["data"].as_str());
+    let size = match data {
+        Some(d) => {
+            let pad = d.bytes().rev().take_while(|&c| c == b'=').count();
+            format!(" · {}", human_bytes((d.len() / 4 * 3).saturating_sub(pad)))
+        }
+        None if b["source"]["url"].is_string() => format!(" · {}", b["source"]["url"].as_str().unwrap_or("")),
+        None => String::new(),
+    };
+    Some(format!("[image · {mime}{size}]"))
+}
+
+/// All readable content of a message/tool content value (a string or content blocks): text as is,
+/// images as placeholders, other blocks as compact JSON.
+pub fn content_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(a) => a
+            .iter()
+            .filter_map(|b| {
+                b["text"]
+                    .as_str()
+                    .map(String::from)
+                    .or_else(|| image_placeholder(b))
+                    .or_else(|| (!b.is_null()).then(|| b.to_string()))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// `12 lines · 3.4 KB` for tool output; image placeholders are counted as images, not as text:
+/// `1 lines · 20 B · 1 image`, or just `1 image`.
+pub fn output_meta(body: &str) -> String {
+    let images = body.lines().filter(|l| l.starts_with("[image · ")).count();
+    let text: Vec<&str> = body.lines().filter(|l| !l.starts_with("[image · ")).collect();
+    let bytes: usize = text.iter().map(|l| l.len()).sum::<usize>() + text.len().saturating_sub(1);
+    let mut parts = Vec::new();
+    if !text.is_empty() || images == 0 {
+        parts.push(format!("{} lines · {}", text.len(), human_bytes(bytes)));
+    }
+    if images > 0 {
+        parts.push(format!("{images} image{}", if images == 1 { "" } else { "s" }));
+    }
+    parts.join(" · ")
+}
+
+/// Content of a `{"content":[…]}` tool result (text parts, images as placeholders).
+pub fn result_text(v: &serde_json::Value) -> String {
+    content_text(&v["content"])
 }
 
 /// Short human form of tool args: the bash command verbatim; otherwise the main path/query
@@ -236,6 +285,26 @@ mod tests {
         assert_eq!(args_summary(&serde_json::json!({"command": "ls -la"})), "ls -la");
         assert_eq!(pretty_if_json("{\"a\":1}"), "{\n  \"a\": 1\n}");
         assert_eq!(pretty_if_json("plain text"), "plain text");
+    }
+
+    #[test]
+    fn image_blocks_become_placeholders() {
+        let pi = serde_json::json!({"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgo="});
+        assert_eq!(image_placeholder(&pi).unwrap(), "[image · image/png · 8 B]");
+        let anth = serde_json::json!({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"}});
+        assert_eq!(image_placeholder(&anth).unwrap(), "[image · image/jpeg · 3 B]");
+        let c = serde_json::json!([{"type": "text", "text": "look:"}, pi]);
+        assert_eq!(content_text(&c), "look:\n[image · image/png · 8 B]");
+    }
+
+    #[test]
+    fn output_meta_counts_images_separately() {
+        assert_eq!(output_meta("a\nbc"), "2 lines · 4 B");
+        assert_eq!(output_meta("[image · image/png · 8.0 KB]"), "1 image");
+        assert_eq!(
+            output_meta("Read image file\n[image · image/png · 8.0 KB]"),
+            "1 lines · 15 B · 1 image"
+        );
     }
 
     #[test]

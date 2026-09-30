@@ -151,6 +151,38 @@ trace_block replay run.json | trace_block    # re-stream with realistic timing
 cat run.json | trace_block -q --trajectory run.md >/dev/null   # export a trajectory afterwards
 ```
 
+## Images
+
+Images sent to a vision model appear in the view as one-line placeholders built from the recorded
+block — `[image · image/png · 8.0 KB]` (media type and decoded size); the base64 data is never
+printed, and `--trajectory FILE.md` notes it as omitted (`-o` and the JSONL trajectory keep it
+byte-exact). This covers user messages and tool results (e.g. a `read`/`Read` of an image file).
+
+Sending an image in pipe mode:
+
+```bash
+# pi: attach with @file (the model must accept images)
+pi --model opencode/… --mode json -p @photo.png "What is in this picture?" | trace_block
+# Claude Code: let it read the file …
+claude -p "Look at ./photo.png — what is in it?" --tools Read --allowedTools Read \
+  --output-format stream-json --verbose | trace_block
+# … or send an image block directly (not echoed into the output stream, like text prompts)
+claude -p --input-format stream-json --output-format stream-json --verbose < message.jsonl | trace_block
+```
+
+**pi and custom models:** pi only sends images to models declared as image-capable. A model in
+`~/.pi/agent/models.json` without `"input": ["text", "image"]` gets the image replaced by the text
+`(image omitted: model does not support images)` in the request — while the session log and the
+event stream still record the image. The model then answers that it cannot see it. Declare the
+input on the model entry:
+
+```json
+{ "id": "gemma-4-31B-it", "input": ["text", "image"] }
+```
+
+(Verified with a request-logging proxy; the event stream alone cannot show this, which is why the
+view shows only what was recorded.)
+
 ## Session logs
 
 Both agents also save every session to disk, and `trace_block` reads those files directly — in the

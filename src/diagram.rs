@@ -168,12 +168,7 @@ impl Diagram {
                 let m = &ev["message"];
                 match m["role"].as_str().unwrap_or("") {
                     "user" => {
-                        let text = m["content"]
-                            .as_array()
-                            .and_then(|a| a.first())
-                            .and_then(|c| c["text"].as_str())
-                            .or_else(|| m["content"].as_str())
-                            .unwrap_or("");
+                        let text = &crate::util::content_text(&m["content"]);
                         self.items.push(Item::Prompt(text.to_string()));
                         true
                     }

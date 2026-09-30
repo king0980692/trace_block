@@ -170,10 +170,7 @@ impl Trajectory {
                             b["tool_use_id"].as_str().unwrap_or("?"),
                             b["is_error"]
                         );
-                        let text = match &b["content"] {
-                            Value::String(t) => t.clone(),
-                            other => serde_json::to_string_pretty(other).unwrap_or_default(),
-                        };
+                        let text = crate::util::content_text(&b["content"]);
                         code(&mut s, "text", &text);
                     } else {
                         s += "### user\n\n";
@@ -295,6 +292,13 @@ fn content_md(s: &mut String, content: &Value, text_lang: &str) {
                     s,
                     "json",
                     &serde_json::to_string_pretty(&b["arguments"]).unwrap_or_default(),
+                );
+            }
+            "image" => {
+                // base64 data is omitted here; the JSONL trajectory / -o file keep it byte-exact
+                *s += &format!(
+                    "**image** · {} (base64 data omitted)\n\n",
+                    crate::util::image_placeholder(b).unwrap_or_default()
                 );
             }
             other => {

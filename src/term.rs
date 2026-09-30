@@ -509,12 +509,7 @@ impl Term {
     fn message_end(&mut self, m: &Value) {
         match m["role"].as_str().unwrap_or("") {
             "user" => {
-                let text = m["content"]
-                    .as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|c| c["text"].as_str())
-                    .or_else(|| m["content"].as_str())
-                    .unwrap_or("");
+                let text = &crate::util::content_text(&m["content"]);
                 let w = self.width();
                 let body = wrap(text, w - 4).join("\n  ");
                 self.gap();
@@ -602,7 +597,6 @@ impl Term {
             .map(|r| r.name.clone())
             .unwrap_or_else(|| ev["toolName"].as_str().unwrap_or("?").to_string());
         let text = crate::util::pretty_if_json(&result_text(&ev["result"]));
-        let total_lines = text.lines().count();
         let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
         let w = self.width();
         let bar = self.paint("34", "│ ");
@@ -640,7 +634,7 @@ impl Term {
         let dur = run
             .map(|r| human_dur(r.started.elapsed().as_secs_f64()))
             .unwrap_or_else(|| "?".into());
-        let meta = format!("{dur} · {total_lines} lines · {}", human_bytes(text.len()));
+        let meta = format!("{dur} · {}", crate::util::output_meta(&text));
         if is_err {
             self.tool_errors += 1;
             if let Some(t) = self.tool_stats.iter_mut().find(|t| t.0 == name) {

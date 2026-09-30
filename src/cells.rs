@@ -385,12 +385,7 @@ impl Model {
         match m["role"].as_str().unwrap_or("") {
             "system" => self.system_message(m, lineno),
             "user" => {
-                let text = m["content"]
-                    .as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|c| c["text"].as_str())
-                    .or_else(|| m["content"].as_str())
-                    .unwrap_or("");
+                let text = &crate::util::content_text(&m["content"]);
                 let i = self.push(Kind::User, lineno);
                 self.cells[i].body = text.to_string();
             }
@@ -598,12 +593,7 @@ impl Model {
                 let m = &ev["message"];
                 match m["role"].as_str().unwrap_or("") {
                     "user" => {
-                        let text = m["content"]
-                            .as_array()
-                            .and_then(|a| a.first())
-                            .and_then(|c| c["text"].as_str())
-                            .or_else(|| m["content"].as_str())
-                            .unwrap_or("");
+                        let text = &crate::util::content_text(&m["content"]);
                         let i = self.push(Kind::User, lineno);
                         self.cells[i].body = text.to_string();
                     }
@@ -766,21 +756,7 @@ pub struct ClaudeMsg {
 }
 
 fn claude_text(content: &Value) -> String {
-    match content {
-        Value::String(s) => s.clone(),
-        Value::Array(a) => a
-            .iter()
-            .filter_map(|b| {
-                b["text"]
-                    .as_str()
-                    .map(String::from)
-                    .or_else(|| (!b.is_null()).then(|| b.to_string()))
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Value::Null => String::new(),
-        other => other.to_string(),
-    }
+    crate::util::content_text(content)
 }
 
 impl Model {
