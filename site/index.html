@@ -15,25 +15,46 @@
 
 <header class="topbar">
   <div class="inner">
+    <button class="menu-btn" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">☰</button>
     <a class="brand" href="#top">trace<span class="dot">_</span>block</a>
-    <nav class="nav" aria-label="Sections">
-      <a href="#quick-start">Quick start</a>
-      <a href="#browser">Browser</a>
-      <a href="#cells">Cells</a>
-      <a href="#claude-code">Claude Code</a>
-      <a href="#session-logs">Session logs</a>
-      <a href="#images">Images</a>
-      <a href="#outputs">Outputs</a>
-      <a href="#diagram">Diagram</a>
-      <a href="#scroll-view">Scroll view</a>
-      <a href="#transparency">Transparency</a>
-      <a href="#how-it-works">How it works</a>
-      <a href="#install">Install</a>
-      <a href="#troubleshooting">Troubleshooting</a>
-    </nav>
+    <span class="spacer"></span>
     <a class="gh" href="https://github.com/king0980692/trace_block">GitHub ↗</a>
   </div>
 </header>
+
+<div class="layout">
+<aside class="sidebar" id="sidebar" aria-label="Sections">
+  <nav>
+    <a href="#top" class="top-link">Overview</a>
+    <a href="#why">Why</a>
+    <a href="#quick-start">Quick start</a>
+    <div class="group">Using it</div>
+    <a href="#browser">The interactive browser</a>
+    <a href="#detail-view" class="sub">Detail view</a>
+    <a href="#search" class="sub">Search</a>
+    <a href="#cells">Cells</a>
+    <a href="#scroll-view">Scroll view</a>
+    <div class="group">Sources</div>
+    <a href="#claude-code">Claude Code</a>
+    <a href="#session-logs">Session logs</a>
+    <a href="#images">Images</a>
+    <a href="#sending-images" class="sub">Sending images</a>
+    <div class="group">Outputs</div>
+    <a href="#outputs">Output files</a>
+    <a href="#diagram">Diagram &amp; viewer</a>
+    <div class="group">Project</div>
+    <a href="#transparency">Transparency</a>
+    <a href="#how-it-works">How it works</a>
+    <a href="#install">Install</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </nav>
+  <div class="side-foot">
+    <a href="https://github.com/king0980692/trace_block">GitHub</a> ·
+    <a href="https://github.com/king0980692/trace_block/releases">Releases</a> ·
+    <a href="https://github.com/king0980692/trace_block/blob/main/DEVELOPMENT.md">Develop</a>
+  </div>
+</aside>
+<div class="backdrop" hidden></div>
 
 <main id="top">
 
@@ -458,6 +479,7 @@ cargo build --release          # → target/release/trace_block</pre></div>
 </section>
 
 </main>
+</div>
 
 <footer>
   <div class="inner">
@@ -467,6 +489,44 @@ cargo build --release          # → target/release/trace_block</pre></div>
 </footer>
 
 <script>
+// sidebar: mobile drawer
+var body = document.body, btn = document.querySelector('.menu-btn'), backdrop = document.querySelector('.backdrop');
+function drawer(open) {
+  body.classList.toggle('nav-open', open);
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  backdrop.hidden = !open;
+}
+btn.addEventListener('click', function () { drawer(!body.classList.contains('nav-open')); });
+backdrop.addEventListener('click', function () { drawer(false); });
+document.querySelectorAll('.sidebar a[href^="#"]').forEach(function (a) {
+  a.addEventListener('click', function () { drawer(false); });
+});
+// sidebar: highlight the section in view
+var links = {};
+document.querySelectorAll('.sidebar nav a[href^="#"]').forEach(function (a) { links[a.getAttribute('href').slice(1)] = a; });
+var targets = Object.keys(links).map(function (id) { return document.getElementById(id); }).filter(Boolean);
+// the sidebar groups sections differently from the page: walk them in page order
+function pageTop(el) { return el.getBoundingClientRect().top + window.scrollY; }
+targets.sort(function (a, b) { return pageTop(a) - pageTop(b); });
+var current = null;
+function spy() {
+  var y = window.scrollY + window.innerHeight * 0.3, best = targets[0];
+  targets.forEach(function (t) { if (pageTop(t) <= y) best = t; });
+  if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 4) best = targets[targets.length - 1];
+  if (best !== current) {
+    if (current) links[current.id].classList.remove('active');
+    links[best.id].classList.add('active');
+    current = best;
+    var a = links[best.id], nav = document.querySelector('.sidebar');
+    var r = a.getBoundingClientRect(), nr = nav.getBoundingClientRect();
+    if (r.top < nr.top || r.bottom > nr.bottom) a.scrollIntoView({ block: 'nearest' });
+  }
+}
+window.addEventListener('scroll', spy, { passive: true });
+window.addEventListener('resize', spy);
+window.addEventListener('hashchange', spy);
+window.addEventListener('load', spy);
+spy();
 // tabs
 document.querySelectorAll('[data-tabs]').forEach(function (tabs) {
   var buttons = tabs.querySelectorAll('[role=tab]');
