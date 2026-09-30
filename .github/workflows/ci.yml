@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - name: smoke test (release build, synthetic streams)
+        run: |
+          cargo build --release --locked
+          BIN=target/release/trace_block
+          $BIN --version
+          # passthrough must be byte-identical; stderr is not a TTY here → plain scroll view
+          $BIN < tests/data/pi-synthetic.jsonl > out.json 2> view.txt
+          cmp out.json tests/data/pi-synthetic.jsonl
+          grep -q "✔ settled" view.txt
+          $BIN < tests/data/claude-synthetic.jsonl > out2.json 2> view2.txt
+          cmp out2.json tests/data/claude-synthetic.jsonl
+          grep -q "✔ result success" view2.txt
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked

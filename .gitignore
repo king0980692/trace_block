@@ -1,0 +1,3 @@
+/target
+# recorded traces contain third-party text, local paths and account metadata: kept local
+/fixtures/

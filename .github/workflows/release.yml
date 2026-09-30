@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to (re)build, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: tag matches Cargo.toml version
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "v$version" = "$TAG" || { echo "tag $TAG != Cargo.toml v$version"; exit 1; }
+
+  build:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            native: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            native: true
+          # Intel macOS is cross-compiled on an Apple Silicon runner
+          - target: x86_64-apple-darwin
+            os: macos-14
+            native: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            native: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: test the built binary
+        if: matrix.native
+        run: |
+          BIN=target/${{ matrix.target }}/release/trace_block
+          $BIN --version
+          $BIN < tests/data/pi-synthetic.jsonl > out.json 2>/dev/null
+          cmp out.json tests/data/pi-synthetic.jsonl
+      - name: package
+        run: |
+          name=trace_block-$TAG-${{ matrix.target }}
+          mkdir "$name"
+          cp target/${{ matrix.target }}/release/trace_block README.md LICENSE CHANGELOG.md "$name"/
+          tar czf "$name.tar.gz" "$name"
+          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: release notes from CHANGELOG.md
+        run: |
+          awk -v tag="$TAG" '
+            $0 ~ "^## " tag "$" {on=1; next}
+            on && /^## / {exit}
+            on {print}
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || echo "Release $TAG" > notes.md
+          cat notes.md
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "trace_block $TAG" --notes-file notes.md
+          fi
